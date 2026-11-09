@@ -1,47 +1,91 @@
-# Run Instructions (Local, Safe)
+# Run Instructions (local, sandbox)
 
-## Prereqs
-- Python 3.10+
+## Prerequisites
+- Python 3.10 to 3.13
 - pip
 
 ## Install
+
+macOS / Linux:
+```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
 
-## Start server
+Windows (PowerShell):
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+If `chromadb` fails to install, the app still runs: it falls back to a small
+built-in vector store and says so at startup (the UI header shows which one is
+in use).
+
+## Configure the LLM (optional)
+
+Copy `.env.example` to `.env`. With no `.env` the app uses the offline **mock**
+model, which needs no key and is deterministic, so demos and tests are
+repeatable. The mock is "naive" by default: it follows instructions hidden in
+customer text, the way a hijacked model would, so you can show the independent
+controls holding.
+
+| Provider | `.env` settings |
+|---|---|
+| Mock (default) | `LLM_PROVIDER=mock` |
+| Claude | `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY=...`, optional `LLM_MODEL` (default `claude-opus-5-5`) |
+| OpenAI | `LLM_PROVIDER=openai`, `LLM_API_KEY=...`, `LLM_MODEL=gpt-4o-mini` |
+| Ollama | `LLM_PROVIDER=openai`, `LLM_BASE_URL=http://localhost:11434/v1`, `LLM_MODEL=llama3.1:8b` |
+| LM Studio | `LLM_PROVIDER=openai`, `LLM_BASE_URL=http://localhost:1234/v1`, `LLM_MODEL=<id>` |
+
+If a real model call fails (no key, network, bad JSON), the app falls back to
+safe deterministic behaviour and records the error under Supervisor ->
+Observability -> Recent LLM calls.
+
+## Start the server
+```bash
 uvicorn app.main:app --reload --port 8000
+```
+Open http://localhost:8000.
+
+## Demo accounts (synthetic)
+| User | Password | Role |
+|---|---|---|
+| alice, bob, carol, dave, erin | `<name>123` (e.g. `alice123`) | Customer |
+| admin | `admin123` | Admin |
+| supervisor | `super123` | Supervisor |
 
 ## Endpoints
-- POST /tasks -> submit a task for the agent to plan and (safely) simulate execution
-- GET /logs -> view structured JSON logs (for demo)
-- POST /tests/rt-01 -> run a safe red-team simulation (hallucination detection) in sandbox
+The browser UI uses the `/api/*` REST endpoints (see `app/main.py`). The
+starter repo endpoints still work:
+- `GET /health`
+- `POST /tasks` -> free-text task through the orchestrator (no customer data access)
+- `GET /logs` -> structured JSON event log (`logs/events.jsonl`)
+- `POST /tests/rt-01` -> starter hallucination test
+- `POST /bus/deliver` -> network-facing inter-agent endpoint (signed JSON-RPC), for ASI07 testing
 
-All tests are safe, local-only, and use canned test data.
-
-## Auto-demo walkthrough script (`run_demo.py`)
-
-This repository includes a convenience walkthrough script `run_demo.py` that will call the local demo endpoints and collect sanitized evidence results in `redteam/results/`.
-
-### Usage
-
-1. Ensure you are in the project root (where `app/`, `run_instructions.md` are located).
-2. Create and activate a Python virtual environment, install deps, and `requests`:
+## Red-team workflow
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt requests
+python redteam/tests/rt_suite.py --reset            # guardrails on, evidence in redteam/results/<ts>/
 ```
-3. Run the demo script. If you already started the server separately (via `uvicorn app.main:app --reload --port 8000`), run:
+Compare against a monitor-only instance:
 ```bash
-python run_demo.py --base-url http://localhost:8000
+GUARDRAILS=off DATA_DIR=data/runtime-off uvicorn app.main:app --port 8001
+python redteam/tests/rt_suite.py --base-url http://localhost:8001 --reset
 ```
-Alternatively, let the script start the dev server for you (development only):
+Or switch off single controls, e.g. `GUARDRAIL_DISABLE=email_recipient,case_scope`.
+Never run with guardrails off outside the sandbox.
+
+Reset all synthetic data between runs from Admin -> Sandbox, or with
+`--reset` on the suite.
+
+## Starter demo script
+`python run_demo.py --base-url http://localhost:8000` still works and saves
+evidence to `redteam/results/collected_evidence_<ts>.json`.
+
+## Tests
 ```bash
-python run_demo.py --base-url http://localhost:8000 --start-server
+python -m pytest -q
 ```
-4. After completion, evidence will be saved under `redteam/results/collected_evidence_<ts>.json`.
-
-**Notes & safety:** The script only calls local endpoints in this starter repo and redacts obvious tokens before saving evidence. Do not use `--start-server` on production systems.
-
----

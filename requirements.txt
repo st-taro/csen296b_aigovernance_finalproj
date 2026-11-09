@@ -1,7 +1,21 @@
 # API service (app/)
-fastapi==0.95.2
-uvicorn[standard]==0.22.0
-pydantic==1.10.7
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29
+pydantic>=2.5,<3
+python-multipart>=0.0.9      # policy file uploads
 
-# Demo / red-team walkthrough client (run_demo.py)
-requests==2.34.2
+# RAG / vector DB
+chromadb>=0.5                # falls back to a built-in JSON store if this fails to install
+
+# Policy upload formats
+pypdf>=4.0
+python-docx>=1.1
+
+# LLM providers (only needed for the provider you use)
+anthropic>=0.40              # LLM_PROVIDER=anthropic
+# LLM_PROVIDER=openai (OpenAI, Ollama, LM Studio) uses `requests`, below
+
+# Demo / red-team client (run_demo.py, redteam/tests/rt_suite.py) and tests
+requests>=2.31
+httpx>=0.27                  # FastAPI TestClient
+pytest>=8
