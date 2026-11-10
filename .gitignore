@@ -49,3 +49,6 @@ logs/
 redteam/results/
 .env
 .pytest_cache/
+
+# --- Personal notes ---
+potential_additions.md
