@@ -63,9 +63,12 @@ def draft_email(args, ctx, decision_id):
           params={"case_id": "str", "to": "str", "draft_id": "int", "subject": "str", "body": "str"})
 def send_email(args, ctx, decision_id):
     if args.get("draft_id"):
-        d = db.q1("SELECT * FROM emails WHERE id=? AND status='draft'", (args["draft_id"],))
+        # The draft must belong to the case the recipient check was run against;
+        # otherwise case A's draft could be sent to case B's contact.
+        d = db.q1("SELECT * FROM emails WHERE id=? AND status='draft' AND case_id=?",
+                  (args["draft_id"], args.get("case_id")))
         if not d:
-            raise ValueError("draft not found")
+            raise ValueError("draft not found for this case")
         db.x("UPDATE emails SET status='sent', folder='sent', to_addr=?, created_at=? WHERE id=?",
              (args["to"], db.now_iso(), d["id"]))
         eid, subject = d["id"], d["subject"]
