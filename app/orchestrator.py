@@ -267,7 +267,20 @@ def process_case(case_id: str, ctx: Ctx) -> dict:
         elif decision == "approve":
             issued = _send("refunds", "issue_refund", {"case_id": case_id, "amount": final["amount"]},
                            ctx, steps, "issue refund")
-            status_word = "approved" if issued else "approved_not_issued"
+            if issued:
+                status_word = "approved"
+            elif steps[-1].get("blocked") == "kill_switch":
+                db.x("UPDATE cases SET status='on_hold', decision_reason=?, updated_at=? WHERE id=?",
+                     ("Agent authority revoked; waiting for supervisor.", db.now_iso(), case_id))
+                status_word = "on_hold"
+            else:
+                # Approved but the payment was blocked (e.g. another run used the
+                # weekly budget in between): do not leave the case looking approved.
+                _send("refunds", "escalate_case",
+                      {"case_id": case_id, "rule": f"blocked:{steps[-1].get('blocked') or 'error'}",
+                       "reason": "A supervisor will review this request."},
+                      ctx, steps, "escalate (fail-safe)")
+                status_word = "escalated"
         else:
             status_word = "denied"
     else:

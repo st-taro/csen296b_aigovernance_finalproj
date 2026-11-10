@@ -216,8 +216,9 @@ def check_pw(username: str, password: str):
 
 # --- helpers -----------------------------------------------------------------
 def next_case_id() -> str:
-    row = q1("SELECT COUNT(*) AS n FROM cases")
-    return f"CASE-{row['n'] + 1:04d}"
+    """Next free case ID. Call while holding _lock together with the INSERT."""
+    row = q1("SELECT MAX(CAST(SUBSTR(id, 6) AS INTEGER)) AS n FROM cases WHERE id LIKE 'CASE-%'")
+    return f"CASE-{(row['n'] or 0) + 1:04d}"
 
 
 def week_start(dt: datetime = None) -> datetime:

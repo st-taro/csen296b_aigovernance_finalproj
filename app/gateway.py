@@ -16,6 +16,7 @@ GUARDRAILS=off (sandbox only) violations are logged as `would_block` and the
 action still executes, which is how the team produces "functional but
 insecure" baseline evidence.
 """
+import threading
 import uuid
 from dataclasses import dataclass, field
 
@@ -62,6 +63,12 @@ class Tool:
 
 TOOLS: dict = {}
 
+# Consequential tools (refunds, emails, profile updates) run their checks and
+# their action under one lock. Without it, two concurrent runs can both read
+# "week-to-date $0" or "order not refunded yet", both pass, and both execute
+# (check-then-act race on the weekly limit and one-refund-per-order).
+_CONSEQUENTIAL_LOCK = threading.RLock()
+
 
 def register(name, agents, consequential=False, checks=(), description="", params=None):
     def deco(fn):
@@ -99,6 +106,13 @@ def call(agent: str, tool: str, args: dict, ctx: Ctx):
         # Unknown tools cannot execute even in monitor mode: there is nothing to run.
         raise ToolBlocked("capability", f"unknown tool '{tool}'", did)
 
+    if t.consequential:
+        with _CONSEQUENTIAL_LOCK:
+            return _check_and_run(agent, tool, t, args, ctx, case_id, violations)
+    return _check_and_run(agent, tool, t, args, ctx, case_id, violations)
+
+
+def _check_and_run(agent, tool, t, args, ctx, case_id, violations):
     if agent not in t.agents:
         violations.append(("capability", f"agent '{agent}' is not permitted to call '{tool}'"))
     if t.consequential and authority_revoked() and not ctx.human_authorized:

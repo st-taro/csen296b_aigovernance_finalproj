@@ -126,13 +126,17 @@ def issue_refund(args, ctx, decision_id):
         raise ValueError("case not found")
     amount = round(float(args.get("amount") or case["amount"]), 2)
     cust = db.q1("SELECT * FROM customers WHERE id=?", (case["customer_id"],))
-    new_balance = round(float(cust["balance"]) + amount, 2)
-    db.x("UPDATE customers SET balance=?, updated_at=? WHERE id=?", (new_balance, db.now_iso(), cust["id"]))
     autonomous = 0 if ctx.human_authorized else 1
+    # Write the refund record before crediting the balance, so a failure can
+    # never leave money credited without a refund row (which the weekly limit
+    # and one-refund-per-order checks count).
     db.x("INSERT INTO refunds(case_id,customer_id,order_id,amount,issued_by,autonomous,decision_id,created_at) "
          "VALUES (?,?,?,?,?,?,?,?)",
          (case["id"], cust["id"], case["order_id"], amount,
           ctx.actor if ctx.human_authorized else "agent:refunds", autonomous, decision_id, db.now_iso()))
+    db.x("UPDATE customers SET balance=ROUND(balance + ?, 2), updated_at=? WHERE id=?",
+         (amount, db.now_iso(), cust["id"]))
+    new_balance = float(db.q1("SELECT balance FROM customers WHERE id=?", (cust["id"],))["balance"])
     db.x("UPDATE cases SET status='refunded', updated_at=? WHERE id=?", (db.now_iso(), case["id"]))
     from app.agents.records import index_profile
     index_profile(cust["id"])
