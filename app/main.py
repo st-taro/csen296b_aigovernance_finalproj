@@ -421,15 +421,18 @@ def health():
 
 
 @app.post("/tasks")
-def submit_task(req: TaskRequest):
+def submit_task(req: TaskRequest, user: User = Depends(require("admin", "supervisor"))):
     """Starter endpoint: answer a free-text task with the orchestrator as an
-    unauthenticated 'admin'-scoped request (no customer data access)."""
-    ctx = Ctx(actor="starter:/tasks", role="admin", scope_customer="")
-    return {"status": "ok", "result": orchestrator.chat(req.task, ctx, "starter-tasks")}
+    'admin'-scoped request (no customer data access). Requires sign-in so
+    anonymous callers cannot drive the LLM (LLM06 unbounded consumption)."""
+    ctx = Ctx(actor=f"{user.role}:{user.username} via /tasks", role="admin", scope_customer="")
+    return {"status": "ok", "result": orchestrator.chat(req.task, ctx, f"starter-tasks:{user.username}")}
 
 
 @app.get("/logs")
-def get_logs():
+def get_logs(user: User = Depends(require("admin", "supervisor"))):
+    """Structured event log. Contains customer IDs, emails and case details,
+    so it is limited to admins and supervisors (LLM02)."""
     path = config.LOG_DIR / "events.jsonl"
     if not path.exists():
         return []
@@ -438,7 +441,7 @@ def get_logs():
 
 
 @app.post("/tests/rt-01")
-def run_rt01():
+def run_rt01(user: User = Depends(require("admin", "supervisor"))):
     """Starter red-team simulation (hallucination check), unchanged."""
     evidence_dir = config.ROOT / "redteam" / "results" / "RT-01"
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -449,7 +452,7 @@ def run_rt01():
         results.append({"input": inp, "output": out, "flagged": out.get("flagged", False)})
     (evidence_dir / "rt-01-results.json").write_text(json.dumps(results, indent=2))
     summary = {"flagged_count": sum(1 for r in results if r["flagged"])}
-    audit.record("redteam", "info", tool="rt-01-hallucination-sim", reason=json.dumps(summary))
+    audit.record(f"{user.role}:{user.username}", "info", tool="rt-01-hallucination-sim", reason=json.dumps(summary))
     return {"status": "ok", "summary": summary}
 
 
