@@ -3,7 +3,6 @@
 Run:  uvicorn app.main:app --reload --port 8000   then open http://localhost:8000
 """
 import json
-import secrets
 from pathlib import Path
 from typing import Optional
 
@@ -36,6 +35,9 @@ def startup():
     db.seed()
     policy.seed_default_policy()
     records_agent.index_all_profiles()
+    if config.BUS_SECRET_IS_EPHEMERAL:
+        print("[bus] BUS_SECRET is unset or a placeholder; using a random per-process key. "
+              "External messages to /bus/deliver cannot be signed until you set BUS_SECRET in .env.")
     if not config.GUARDRAILS or config.GUARDRAIL_DISABLE:
         print("\n*** WARNING: guardrails are disabled or partly disabled "
               f"(GUARDRAILS={config.GUARDRAILS}, disabled={sorted(config.GUARDRAIL_DISABLE)}). Sandbox use only. ***\n")
@@ -52,11 +54,11 @@ class User(BaseModel):
 
 
 def current_user(authorization: str = Header(default="")) -> User:
-    token = authorization.removeprefix("Bearer ").strip()
-    s = db.q1("SELECT s.token, u.username, u.role, u.customer_id FROM sessions s JOIN users u "
-              "ON u.username=s.username WHERE s.token=?", (token,)) if token else None
+    # User.token is the stored token hash: it identifies the session (logout,
+    # chat memory) without keeping the bearer token around.
+    s = db.session_user(authorization.removeprefix("Bearer ").strip())
     if not s:
-        raise HTTPException(401, "not signed in")
+        raise HTTPException(401, "not signed in or session expired")
     return User(**s)
 
 
@@ -82,12 +84,18 @@ class LoginIn(BaseModel):
 
 @app.post("/api/login")
 def login(body: LoginIn):
-    u = db.check_pw(body.username, body.password)
+    username = body.username[:80]
+    if db.login_locked(username):
+        audit.record(f"anon:{username[:40]}", "blocked", tool="login", control="auth_lockout",
+                     reason=f"{config.LOGIN_MAX_FAILURES}+ failed logins in {config.LOGIN_LOCKOUT_MINUTES} min")
+        raise HTTPException(429, f"too many failed sign-ins; try again in {config.LOGIN_LOCKOUT_MINUTES} minutes")
+    u = db.check_pw(username, body.password)
     if not u:
-        audit.record(f"anon:{body.username[:40]}", "blocked", tool="login", control="auth", reason="bad credentials")
+        db.record_login_failure(username)
+        audit.record(f"anon:{username[:40]}", "blocked", tool="login", control="auth", reason="bad credentials")
         raise HTTPException(401, "wrong username or password")
-    token = secrets.token_urlsafe(24)
-    db.x("INSERT INTO sessions VALUES (?,?,?)", (token, u["username"], db.now_iso()))
+    db.clear_login_failures(username)
+    token = db.create_session(u["username"])
     return {"token": token, "username": u["username"], "role": u["role"], "customer_id": u["customer_id"]}
 
 
@@ -421,15 +429,18 @@ def health():
 
 
 @app.post("/tasks")
-def submit_task(req: TaskRequest):
+def submit_task(req: TaskRequest, user: User = Depends(require("admin", "supervisor"))):
     """Starter endpoint: answer a free-text task with the orchestrator as an
-    unauthenticated 'admin'-scoped request (no customer data access)."""
-    ctx = Ctx(actor="starter:/tasks", role="admin", scope_customer="")
-    return {"status": "ok", "result": orchestrator.chat(req.task, ctx, "starter-tasks")}
+    'admin'-scoped request (no customer data access). Requires sign-in so
+    anonymous callers cannot drive the LLM (LLM06 unbounded consumption)."""
+    ctx = Ctx(actor=f"{user.role}:{user.username} via /tasks", role="admin", scope_customer="")
+    return {"status": "ok", "result": orchestrator.chat(req.task, ctx, f"starter-tasks:{user.username}")}
 
 
 @app.get("/logs")
-def get_logs():
+def get_logs(user: User = Depends(require("admin", "supervisor"))):
+    """Structured event log. Contains customer IDs, emails and case details,
+    so it is limited to admins and supervisors (LLM02)."""
     path = config.LOG_DIR / "events.jsonl"
     if not path.exists():
         return []
@@ -438,7 +449,7 @@ def get_logs():
 
 
 @app.post("/tests/rt-01")
-def run_rt01():
+def run_rt01(user: User = Depends(require("admin", "supervisor"))):
     """Starter red-team simulation (hallucination check), unchanged."""
     evidence_dir = config.ROOT / "redteam" / "results" / "RT-01"
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -449,7 +460,7 @@ def run_rt01():
         results.append({"input": inp, "output": out, "flagged": out.get("flagged", False)})
     (evidence_dir / "rt-01-results.json").write_text(json.dumps(results, indent=2))
     summary = {"flagged_count": sum(1 for r in results if r["flagged"])}
-    audit.record("redteam", "info", tool="rt-01-hallucination-sim", reason=json.dumps(summary))
+    audit.record(f"{user.role}:{user.username}", "info", tool="rt-01-hallucination-sim", reason=json.dumps(summary))
     return {"status": "ok", "summary": summary}
 
 

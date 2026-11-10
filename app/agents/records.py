@@ -35,7 +35,19 @@ def _profile_view(p: dict) -> dict:
     return out
 
 
+def _storage_copy(p: dict) -> dict:
+    """Copy of a profile with bank details masked, for anything stored outside
+    the system of record (vector DB, mock drive). Masking here does not depend
+    on output_filter: the full numbers stay only in the customers table, which
+    the refund tool reads when it credits a balance (LLM02, LLM08)."""
+    out = dict(p)
+    out["bank_account"] = guardrails.mask_account(p.get("bank_account"))
+    out["bank_routing"] = guardrails.mask_account(p.get("bank_routing"))
+    return out
+
+
 def profile_doc(p: dict) -> str:
+    p = _storage_copy(p)
     return (f"Customer profile {p['id']}: {p['name']}, email {p['email']}, phone {p['phone']}, "
             f"address {p['address']}. Tier {p['tier']}. Bank: {p['bank_name']} account {p['bank_account']} "
             f"routing {p['bank_routing']}. Current balance ${p['balance']:.2f}. Notes: {p['notes'] or 'none'}.")
@@ -131,7 +143,7 @@ def index_profile(customer_id: str):
     p = db.q1("SELECT * FROM customers WHERE id=?", (customer_id,))
     if not p:
         return
-    drive.upload("profiles", f"{p['id']}.json", p)
+    drive.upload("profiles", f"{p['id']}.json", _storage_copy(p))
     vectorstore.store().upsert("profiles", [p["id"]], [profile_doc(p)], [{"customer_id": p["id"]}])
 
 

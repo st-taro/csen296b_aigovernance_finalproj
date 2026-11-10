@@ -36,13 +36,16 @@ def submit_case(args, ctx, decision_id):
     if config.control_enabled("input_filter"):
         description = description[:config.MAX_INPUT_CHARS]
     inj = guardrails.detect_injection(description)
-    case_id = db.next_case_id()
     ts = db.now_iso()
-    db.x("INSERT INTO cases(id,customer_id,order_id,amount,reason,description,contact_email,status,"
-         "injection_flag,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-         (case_id, cust_id, order_id, amount, reason, description,
-          customer["email"],  # contact email comes from the record, never from the request
-          "submitted", int(inj["flagged"]), ts, ts))
+    # Allocate the ID and insert under one lock, or concurrent submissions get
+    # the same ID and all but one fail.
+    with db._lock:
+        case_id = db.next_case_id()
+        db.x("INSERT INTO cases(id,customer_id,order_id,amount,reason,description,contact_email,status,"
+             "injection_flag,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+             (case_id, cust_id, order_id, amount, reason, description,
+              customer["email"],  # contact email comes from the record, never from the request
+              "submitted", int(inj["flagged"]), ts, ts))
     if inj["flagged"]:
         audit.record(ctx.actor, "info", agent="intake", tool="input_filter", case_id=case_id,
                      control="input_filter", reason="possible prompt injection: " + "; ".join(inj["patterns"][:3]),

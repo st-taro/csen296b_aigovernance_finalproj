@@ -5,6 +5,7 @@ runtime: there is no API that writes them (ASI03 control: an agent cannot raise
 its own limits or permissions).
 """
 import os
+import secrets
 from pathlib import Path
 
 
@@ -87,8 +88,26 @@ MAX_TOOL_CALLS_PER_RUN = int(os.environ.get("MAX_TOOL_CALLS_PER_RUN", "30"))
 MAX_PLAN_STEPS = int(os.environ.get("MAX_PLAN_STEPS", "8"))
 MAX_INPUT_CHARS = int(os.environ.get("MAX_INPUT_CHARS", "4000"))
 
-# HMAC key used to sign inter-agent bus messages (ASI07)
-BUS_SECRET = os.environ.get("BUS_SECRET", "sandbox-bus-secret-change-me")
+# HMAC master key for inter-agent bus messages (ASI07). Each sender signs with
+# its own key derived from this one (see app/bus.py). If BUS_SECRET is unset or
+# still a placeholder from the repo, a random per-process secret is used
+# instead: a publicly known key would let anyone sign messages to
+# /bus/deliver. Set a real value in .env to sign test messages from outside.
+_PLACEHOLDER_BUS_SECRETS = {"", "sandbox-bus-secret-change-me", "change-me-for-your-sandbox"}
+_bus_secret = os.environ.get("BUS_SECRET", "").strip()
+BUS_SECRET_IS_EPHEMERAL = _bus_secret in _PLACEHOLDER_BUS_SECRETS
+BUS_SECRET = secrets.token_hex(32) if BUS_SECRET_IS_EPHEMERAL else _bus_secret
+# Bus messages older than this (or this far in the future) are rejected, which
+# bounds replays even across restarts, when the in-memory replay cache is empty.
+BUS_MAX_AGE_SECONDS = int(os.environ.get("BUS_MAX_AGE_SECONDS", "60"))
+
+# --- Sessions and login (ASI03) ---------------------------------------------
+# Sessions expire this long after sign-in.
+SESSION_TTL_MINUTES = int(os.environ.get("SESSION_TTL_MINUTES", "480"))
+# After this many failed logins for one username within LOGIN_LOCKOUT_MINUTES,
+# further attempts are refused until the window passes. 0 disables lockout.
+LOGIN_MAX_FAILURES = int(os.environ.get("LOGIN_MAX_FAILURES", "5"))
+LOGIN_LOCKOUT_MINUTES = int(os.environ.get("LOGIN_LOCKOUT_MINUTES", "15"))
 
 SUPPORT_EMAIL = "support@refundmemaybe.example"
 APP_NAME = "Refund Me Maybe"
@@ -106,4 +125,6 @@ def summary() -> dict:
         "hard_single_limit": HARD_SINGLE_LIMIT,
         "hard_weekly_limit": HARD_WEEKLY_LIMIT,
         "max_tool_calls_per_run": MAX_TOOL_CALLS_PER_RUN,
+        "session_ttl_minutes": SESSION_TTL_MINUTES,
+        "login_max_failures": LOGIN_MAX_FAILURES,
     }

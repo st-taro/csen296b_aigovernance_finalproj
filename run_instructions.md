@@ -64,6 +64,10 @@ starter repo endpoints still work:
 - `POST /tasks` -> free-text task through the orchestrator (no customer data access)
 - `GET /logs` -> structured JSON event log (`logs/events.jsonl`)
 - `POST /tests/rt-01` -> starter hallucination test
+
+`/tasks`, `/logs` and `/tests/rt-01` need an admin or supervisor session
+(`Authorization: Bearer <token>` from `POST /api/login`). `run_demo.py` signs in
+as `admin` by default; pass `--username`/`--password` to change it.
 - `POST /bus/deliver` -> network-facing inter-agent endpoint (signed JSON-RPC), for ASI07 testing
 
 ## Red-team workflow

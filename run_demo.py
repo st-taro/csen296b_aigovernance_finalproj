@@ -16,6 +16,8 @@ Options:
   --start-server  OPTIONAL: try to start the example server (uvicorn) as a subprocess.
                   Use only in local dev. The script will try to stop it at the end.
   --timeout       HTTP timeout seconds (default: 5)
+  --username      Account to sign in as (default: admin). /tasks, /tests/rt-01
+  --password      and /logs need an admin or supervisor session (default: admin123)
   --out           Output evidence JSON path (default: redteam/results/collected_evidence_<ts>.json)
 """
 
@@ -51,29 +53,37 @@ def health_check(base_url: str, timeout: int = 5) -> Dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
 
-def post_task(base_url: str, task: str = "demo-task", payload: Optional[Dict] = None, timeout: int = 5) -> Dict[str, Any]:
+def login(base_url: str, username: str, password: str, timeout: int = 5) -> Dict[str, str]:
+    """Sign in and return the Authorization header for later calls."""
+    r = requests.post(f"{base_url}/api/login", json={"username": username, "password": password}, timeout=timeout)
+    r.raise_for_status()
+    return {"Authorization": "Bearer " + r.json()["token"]}
+
+
+def post_task(base_url: str, task: str = "demo-task", payload: Optional[Dict] = None, timeout: int = 5,
+              headers: Optional[Dict] = None) -> Dict[str, Any]:
     url = f"{base_url}/tasks"
     data = {"task": task, "data": payload or {}}
     try:
-        r = requests.post(url, json=data, timeout=timeout)
+        r = requests.post(url, json=data, timeout=timeout, headers=headers)
         return {"ok": True, "status_code": r.status_code, "json": r.json()}
     except requests.RequestException as e:
         return {"ok": False, "error": str(e)}
 
 
-def run_rt01(base_url: str, timeout: int = 10) -> Dict[str, Any]:
+def run_rt01(base_url: str, timeout: int = 10, headers: Optional[Dict] = None) -> Dict[str, Any]:
     url = f"{base_url}/tests/rt-01"
     try:
-        r = requests.post(url, timeout=timeout)
+        r = requests.post(url, timeout=timeout, headers=headers)
         return {"ok": True, "status_code": r.status_code, "json": r.json()}
     except requests.RequestException as e:
         return {"ok": False, "error": str(e)}
 
 
-def get_logs(base_url: str, timeout: int = 5) -> Dict[str, Any]:
+def get_logs(base_url: str, timeout: int = 5, headers: Optional[Dict] = None) -> Dict[str, Any]:
     url = f"{base_url}/logs"
     try:
-        r = requests.get(url, timeout=timeout)
+        r = requests.get(url, timeout=timeout, headers=headers)
         return {"ok": True, "status_code": r.status_code, "json": r.json()}
     except requests.RequestException as e:
         return {"ok": False, "error": str(e)}
@@ -108,6 +118,8 @@ def main():
     parser.add_argument("--start-server", action="store_true", help="Start uvicorn locally (dev only)")
     parser.add_argument("--timeout", type=int, default=5, help="HTTP timeout seconds")
     parser.add_argument("--out", default=None, help="Output evidence path (optional)")
+    parser.add_argument("--username", default="admin", help="Admin or supervisor account to sign in as")
+    parser.add_argument("--password", default="admin123", help="Password for --username")
     args = parser.parse_args()
 
     ensure_dirs()
@@ -129,16 +141,21 @@ def main():
         health = health_check(args.base_url, timeout=args.timeout)
         evidence["steps"].append({"step": "health_check", "result": health})
 
+        # Sign in (the demo endpoints below require an admin or supervisor session)
+        headers = login(args.base_url, args.username, args.password, timeout=args.timeout)
+        evidence["steps"].append({"step": "login", "result": {"ok": True, "username": args.username}})
+
         # Normal workflow
-        task_res = post_task(args.base_url, task="process-expense", payload={"amount": 42}, timeout=args.timeout)
+        task_res = post_task(args.base_url, task="process-expense", payload={"amount": 42}, timeout=args.timeout,
+                             headers=headers)
         evidence["steps"].append({"step": "post_task", "request": {"task": "process-expense"}, "result": task_res})
 
         # Red-team simulation
-        rt_res = run_rt01(args.base_url, timeout=max(args.timeout, 10))
+        rt_res = run_rt01(args.base_url, timeout=max(args.timeout, 10), headers=headers)
         evidence["steps"].append({"step": "run_rt01", "result": rt_res})
 
         # Fetch logs
-        logs_res = get_logs(args.base_url, timeout=args.timeout)
+        logs_res = get_logs(args.base_url, timeout=args.timeout, headers=headers)
         evidence["steps"].append({"step": "get_logs", "result": logs_res})
 
         if logs_res.get("ok") and isinstance(logs_res.get("json"), list):
