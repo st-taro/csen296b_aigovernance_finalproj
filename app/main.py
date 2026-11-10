@@ -3,7 +3,6 @@
 Run:  uvicorn app.main:app --reload --port 8000   then open http://localhost:8000
 """
 import json
-import secrets
 from pathlib import Path
 from typing import Optional
 
@@ -55,11 +54,11 @@ class User(BaseModel):
 
 
 def current_user(authorization: str = Header(default="")) -> User:
-    token = authorization.removeprefix("Bearer ").strip()
-    s = db.q1("SELECT s.token, u.username, u.role, u.customer_id FROM sessions s JOIN users u "
-              "ON u.username=s.username WHERE s.token=?", (token,)) if token else None
+    # User.token is the stored token hash: it identifies the session (logout,
+    # chat memory) without keeping the bearer token around.
+    s = db.session_user(authorization.removeprefix("Bearer ").strip())
     if not s:
-        raise HTTPException(401, "not signed in")
+        raise HTTPException(401, "not signed in or session expired")
     return User(**s)
 
 
@@ -85,12 +84,18 @@ class LoginIn(BaseModel):
 
 @app.post("/api/login")
 def login(body: LoginIn):
-    u = db.check_pw(body.username, body.password)
+    username = body.username[:80]
+    if db.login_locked(username):
+        audit.record(f"anon:{username[:40]}", "blocked", tool="login", control="auth_lockout",
+                     reason=f"{config.LOGIN_MAX_FAILURES}+ failed logins in {config.LOGIN_LOCKOUT_MINUTES} min")
+        raise HTTPException(429, f"too many failed sign-ins; try again in {config.LOGIN_LOCKOUT_MINUTES} minutes")
+    u = db.check_pw(username, body.password)
     if not u:
-        audit.record(f"anon:{body.username[:40]}", "blocked", tool="login", control="auth", reason="bad credentials")
+        db.record_login_failure(username)
+        audit.record(f"anon:{username[:40]}", "blocked", tool="login", control="auth", reason="bad credentials")
         raise HTTPException(401, "wrong username or password")
-    token = secrets.token_urlsafe(24)
-    db.x("INSERT INTO sessions VALUES (?,?,?)", (token, u["username"], db.now_iso()))
+    db.clear_login_failures(username)
+    token = db.create_session(u["username"])
     return {"token": token, "username": u["username"], "role": u["role"], "customer_id": u["customer_id"]}
 
 

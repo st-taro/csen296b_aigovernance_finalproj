@@ -101,6 +101,14 @@ BUS_SECRET = secrets.token_hex(32) if BUS_SECRET_IS_EPHEMERAL else _bus_secret
 # bounds replays even across restarts, when the in-memory replay cache is empty.
 BUS_MAX_AGE_SECONDS = int(os.environ.get("BUS_MAX_AGE_SECONDS", "60"))
 
+# --- Sessions and login (ASI03) ---------------------------------------------
+# Sessions expire this long after sign-in.
+SESSION_TTL_MINUTES = int(os.environ.get("SESSION_TTL_MINUTES", "480"))
+# After this many failed logins for one username within LOGIN_LOCKOUT_MINUTES,
+# further attempts are refused until the window passes. 0 disables lockout.
+LOGIN_MAX_FAILURES = int(os.environ.get("LOGIN_MAX_FAILURES", "5"))
+LOGIN_LOCKOUT_MINUTES = int(os.environ.get("LOGIN_LOCKOUT_MINUTES", "15"))
+
 SUPPORT_EMAIL = "support@refundmemaybe.example"
 APP_NAME = "Refund Me Maybe"
 
@@ -117,4 +125,6 @@ def summary() -> dict:
         "hard_single_limit": HARD_SINGLE_LIMIT,
         "hard_weekly_limit": HARD_WEEKLY_LIMIT,
         "max_tool_calls_per_run": MAX_TOOL_CALLS_PER_RUN,
+        "session_ttl_minutes": SESSION_TTL_MINUTES,
+        "login_max_failures": LOGIN_MAX_FAILURES,
     }

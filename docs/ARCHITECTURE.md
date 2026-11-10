@@ -99,5 +99,5 @@ The LLM proposes, the policy engine and gateway dispose:
 - A policy upload can widen the purchase window up to 365 days.
 - Persistent memory notes and stored case descriptions feed later prompts (memory/context poisoning path).
 - `/bus/deliver` is unauthenticated apart from the HMAC. Per-sender keys are derived from one master `BUS_SECRET` in `.env`, so leaking the master leaks every key (external messages still get no customer scope).
-- Session tokens never expire; passwords are demo passwords.
+- Sessions expire after `SESSION_TTL_MINUTES` (default 8 h) and are stored as token hashes; logins lock for 15 min after 5 failures per username. Passwords are still demo passwords, and the lockout lets anyone lock a known username out (a deliberate trade-off).
 - The mock drive and mailbox are local files and tables, not real cloud APIs.

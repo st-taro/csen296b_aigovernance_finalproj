@@ -22,9 +22,14 @@ CREATE TABLE IF NOT EXISTS users (
     customer_id TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
+    token TEXT PRIMARY KEY,          -- SHA-256 of the bearer token, never the token itself
     username TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS login_failures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    ts TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS customers (
     id TEXT PRIMARY KEY,
@@ -212,6 +217,61 @@ def check_pw(username: str, password: str):
     if secrets.compare_digest(hash_pw(password, u["pw_salt"]), u["pw_hash"]):
         return u
     return None
+
+
+# --- sessions ----------------------------------------------------------------
+def token_hash(token: str) -> str:
+    """Sessions are stored by token hash, so a leaked DB file or backup does
+    not hand out live bearer tokens."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_session(username: str) -> str:
+    token = secrets.token_urlsafe(24)
+    x("DELETE FROM sessions WHERE created_at<?", (_session_cutoff(),))   # purge expired
+    x("INSERT INTO sessions VALUES (?,?,?)", (token_hash(token), username, now_iso()))
+    return token
+
+
+def _session_cutoff() -> str:
+    return (now() - timedelta(minutes=config.SESSION_TTL_MINUTES)).isoformat(timespec="seconds")
+
+
+def session_user(token: str):
+    """User row for a live session, or None. Expired sessions are deleted."""
+    if not token:
+        return None
+    th = token_hash(token)
+    s = q1("SELECT s.token, s.created_at, u.username, u.role, u.customer_id FROM sessions s "
+           "JOIN users u ON u.username=s.username WHERE s.token=?", (th,))
+    if not s:
+        return None
+    if s["created_at"] < _session_cutoff():
+        x("DELETE FROM sessions WHERE token=?", (th,))
+        return None
+    s.pop("created_at")
+    return s
+
+
+# --- login lockout -----------------------------------------------------------
+def _lockout_cutoff() -> str:
+    return (now() - timedelta(minutes=config.LOGIN_LOCKOUT_MINUTES)).isoformat(timespec="seconds")
+
+
+def login_locked(username: str) -> bool:
+    if config.LOGIN_MAX_FAILURES <= 0:
+        return False
+    row = q1("SELECT COUNT(*) AS n FROM login_failures WHERE username=? AND ts>=?",
+             (username, _lockout_cutoff()))
+    return row["n"] >= config.LOGIN_MAX_FAILURES
+
+
+def record_login_failure(username: str) -> None:
+    x("INSERT INTO login_failures(username,ts) VALUES (?,?)", (username, now_iso()))
+
+
+def clear_login_failures(username: str) -> None:
+    x("DELETE FROM login_failures WHERE username=?", (username,))
 
 
 # --- helpers -----------------------------------------------------------------
