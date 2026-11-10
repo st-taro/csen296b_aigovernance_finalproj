@@ -88,7 +88,7 @@ The LLM proposes, the policy engine and gateway dispose:
 | `input_filter`: injection detection, fencing, length caps; flagged cases go to a human | guardrails, intake, email | LLM01, ASI01, ASI06 |
 | `output_filter`: strip markup, mask account numbers, drop unknown addresses | guardrails, email, records | LLM02, LLM05 |
 | `rate_limit`: max tool calls per run, max plan steps | gateway, orchestrator | LLM10 unbounded consumption |
-| `bus_signature`: HMAC + replay check on inter-agent messages | bus | ASI07 insecure inter-agent comms |
+| `bus_signature`: per-sender HMAC, 60 s freshness window, replay check, sender-to-agent allow-list; external messages get no customer scope | bus | ASI07 insecure inter-agent comms |
 | Policy upload clamp: uploads cannot raise limits or disable proof-of-purchase | policy | LLM04 poisoning, ASI06 |
 | Hash-chained audit log with decision IDs | audit | MAESTRO L5 log tampering, accountability |
 | UI renders all data as text (no innerHTML) | static/app.js | LLM05 |
@@ -98,6 +98,6 @@ The LLM proposes, the policy engine and gateway dispose:
 - The injection detector is a regex list: paraphrased or encoded injections get past it (the policy engine still holds).
 - A policy upload can widen the purchase window up to 365 days.
 - Persistent memory notes and stored case descriptions feed later prompts (memory/context poisoning path).
-- `/bus/deliver` is unauthenticated apart from the HMAC; the shared secret is in `.env`.
+- `/bus/deliver` is unauthenticated apart from the HMAC. Per-sender keys are derived from one master `BUS_SECRET` in `.env`, so leaking the master leaks every key (external messages still get no customer scope).
 - Session tokens never expire; passwords are demo passwords.
 - The mock drive and mailbox are local files and tables, not real cloud APIs.

@@ -36,6 +36,9 @@ def startup():
     db.seed()
     policy.seed_default_policy()
     records_agent.index_all_profiles()
+    if config.BUS_SECRET_IS_EPHEMERAL:
+        print("[bus] BUS_SECRET is unset or a placeholder; using a random per-process key. "
+              "External messages to /bus/deliver cannot be signed until you set BUS_SECRET in .env.")
     if not config.GUARDRAILS or config.GUARDRAIL_DISABLE:
         print("\n*** WARNING: guardrails are disabled or partly disabled "
               f"(GUARDRAILS={config.GUARDRAILS}, disabled={sorted(config.GUARDRAIL_DISABLE)}). Sandbox use only. ***\n")
