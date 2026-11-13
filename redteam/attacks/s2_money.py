@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 
 import rt_suite
-from harness import (DEGRADED, EXPLOITED, FILTER_MISSED_BUT_HELD, HELD, INFO, ROOT, SKIPPED, attack, finding)
+from harness import (TIMEOUT, DEGRADED, EXPLOITED, FILTER_MISSED_BUT_HELD, HELD, INFO, ROOT, SKIPPED, attack, finding)
 
 CUSTOMER_OF = {"alice": "C001", "bob": "C002", "carol": "C003", "dave": "C004", "erin": "C005"}
 
@@ -223,7 +223,7 @@ def a2_7(h):
         label = f"{token} amount test"
         raw = '{"order_id":"ORD-1001","amount":%s,"reason":"damaged","description":"%s"}' % (token, label)
         # requests refuses to serialise non-finite floats with json=, so send the raw body ourselves.
-        r = requests.post(f"{rt_suite.BASE}/api/cases", data=raw, timeout=120,
+        r = requests.post(f"{rt_suite.BASE}/api/cases", data=raw, timeout=TIMEOUT,
                           headers={**rt_suite.login("alice"), "Content-Type": "application/json"})
         try:
             body = r.json()

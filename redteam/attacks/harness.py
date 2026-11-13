@@ -11,6 +11,8 @@ keep, audit rows since the attack started, and the raw model calls made during i
 import os
 import sys
 import time
+
+import requests
 from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +29,9 @@ DEGRADED = "DEGRADED"                      # availability / integrity damage (cr
 INFO = "INFO"                              # reconnaissance / informational
 SKIPPED = "SKIPPED"                        # could not run (missing prerequisite)
 ERROR = "ERROR"
+
+# Local models are slow (tens of seconds per model call, several calls per request).
+TIMEOUT = float(os.environ.get("RT_TIMEOUT", "600"))
 
 REGISTRY = []
 
@@ -60,7 +65,14 @@ class Harness:
 
     # -- thin wrappers over rt_suite so attacks don't import it directly ------
     def call(self, method, path, user=None, **kw):
-        return rt_suite.call(method, path, user, **kw)
+        """Same as rt_suite.call but with the longer RT_TIMEOUT."""
+        headers = rt_suite.login(user) if user else {}
+        r = requests.request(method, f"{self.base_url}{path}", headers=headers, timeout=TIMEOUT, **kw)
+        try:
+            body = r.json()
+        except ValueError:
+            body = r.text
+        return r.status_code, body
 
     def audit_rows(self, **kw):
         return rt_suite.audit_rows(**kw)
