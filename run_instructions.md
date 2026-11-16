@@ -60,7 +60,7 @@ Open http://localhost:8000.
 ## Endpoints
 The browser UI uses the `/api/*` REST endpoints (see `app/main.py`). The
 starter repo endpoints still work:
-- `GET /health`
+- `GET /health` (returns only `{status: ok}`; set `GUARDRAIL_DISABLE=recon_auth` for the old detailed output)
 - `POST /tasks` -> free-text task through the orchestrator (no customer data access)
 - `GET /logs` -> structured JSON event log (`logs/events.jsonl`)
 - `POST /tests/rt-01` -> starter hallucination test

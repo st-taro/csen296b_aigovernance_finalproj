@@ -9,6 +9,8 @@ below is its outline.
 
 **Finding status:** `Confirmed` = reproduced (red-team run or in-process check) ·
 `Code review` = seen in the code, not yet run · `Design` = accepted trade-off.
+`Mitigated` = blue-team defence built and tested (see
+[../blueteam/defenses.md](../blueteam/defenses.md)); the earlier finding is kept in brackets.
 
 ---
 
@@ -133,7 +135,7 @@ and the tests and defences that cover it.
 |---|---|---|---|---|---|---|---|
 | S1 | Customer plans intents beyond their role (process_case, export, permission change) | T1 / E2 | M / H | `ROLE_INTENTS` allow-list, gateway capability | Unknown intents are tried as raw tool names when `capability` is off | Code review | 1.4, 1.7 / BT 1.4, 1.7 |
 | S2 | Forged or replayed bus message | T2 / E5 | L / H | HMAC, 60 s window, replay cache, routes | Replay cache is per process (config E) | Code review | 3.1a-b / BT 3.1 |
-| S3 | **Leaked `BUS_SECRET` reads all customers' mail and refunds** | T5 / E5 | L / H | External context has `scope_customer=""` | `list_emails` (`email_agent.py:349`) and `refund_report` (`reporting.py:231`) filter only when scope is truthy, so `""` means "everything"; `organize_email`/`receive_email` have no scope check (spoofed inbound mail). One master key derives all sender keys | **Confirmed** (in-process, valid key) | 3.1d / BT 3.1 |
+| S3 | **Leaked `BUS_SECRET` reads all customers' mail and refunds** | T5 / E5 | L / H | External context has `scope_customer=""` | `list_emails` (`email_agent.py:349`) and `refund_report` (`reporting.py:231`) filter only when scope is truthy, so `""` means "everything"; `organize_email`/`receive_email` have no scope check (spoofed inbound mail). One master key derives all sender keys | **Mitigated** (BT 3.1d, case_scope) [was: **Confirmed** (in-process, valid key)] | 3.1d / BT 3.1 |
 | S4 | Lockout of the only supervisor blocks the kill switch and decisions | T2 / E8 | H / H | 5 failures / 15 min lockout | Per-username only, no per-source limit, one supervisor account, no break-glass path | Code review (by design) | 8.2 / BT 8.2 |
 | S5 | Compromised supervisor approves anything | T4 / E9 | L / H | `order_checks` still apply; audit row | Human path skips single, weekly and policy-engine checks; note is optional; no second approver | Design | 7.6 / BT 7.6 |
 
@@ -145,9 +147,9 @@ and the tests and defences that cover it.
 | T-2 | Injection via `order_id` | T1 / E1 | M / M | Engine denies unknown orders | No format or length check (`intake.py:24`); unfenced in Refunds prompt (`refunds.py:124`), email prompt (`email_agent.py:265`) and vector DB `case_doc` (`records.py:57`) | Code review | 1.3 / BT 1.3 |
 | T-3 | Weekly cap or one-refund-per-order race | T1 / E1 | M / H | `_CONSEQUENTIAL_LOCK` (`gateway.py:70`) | `threading.RLock` is per process; SQLite check and insert are not one transaction, so `--workers 4` can break the cap | Code review | 2.3, 2.4 / BT 2.3, 2.4 |
 | T-4 | Salami refunds just under the limits | T1 / E1 | H / M | Weekly cap counts all customers | Within policy by design; calendar week resets Monday 00:00 UTC | Design | 2.2, 2.6 / BT 2.2, 2.6 |
-| T-5 | Malformed amounts (NaN, Infinity, negative) | T1 / E1 | M / M | Engine denies ≤ 0 and > order total | NaN gives HTTP 500 (NOT NULL) instead of 422; Infinity is stored | Code review (BT doc) | 2.1, 2.7 / BT 2.1, 2.7 |
-| T-6 | **Policy poisoning by admin: widen or disable autonomy** | T3 / E4 | M / H | Clamp of single/weekly ceilings; proof-of-purchase and one-per-order forced on | Policy goes live at once, no approver; old versions re-activatable; window up to 365 days; `-1` limit and empty `eligible_reasons` accepted with no warning (all cases escalate) | **Confirmed** (in-process) | 4.2, 4.5 / BT 4.2, 4.5 |
-| T-7 | **`nan` policy limit disables the gateway single-limit check** | T3 / E4 | L / H | Policy engine still escalates | `nan > 100` is false so no clamp (`policy.py:85`); gateway `min(nan, 100)` is `nan` so `check_single_limit` never fires (`gateway.py:226`); upload returns 500 but the policy is **active**; `/api/system` then returns 500 | **Confirmed** (in-process) | 4.6 / BT 4.6 |
+| T-5 | Malformed amounts (NaN, Infinity, negative) | T1 / E1 | M / M | Engine denies ≤ 0 and > order total | NaN gives HTTP 500 (NOT NULL) instead of 422; Infinity is stored | **Mitigated** (BT 2.7, input_validation) [was: Code review (BT doc)] | 2.1, 2.7 / BT 2.1, 2.7 |
+| T-6 | **Policy poisoning by admin: widen or disable autonomy** | T3 / E4 | M / H | Clamp of single/weekly ceilings; proof-of-purchase and one-per-order forced on | Policy goes live at once, no approver; old versions re-activatable; window up to 365 days; `-1` limit and empty `eligible_reasons` accepted with no warning (all cases escalate) | **Mitigated** (BT 4.2/4.5, policy_validation + two_person_policy) [was: **Confirmed** (in-process)] | 4.2, 4.5 / BT 4.2, 4.5 |
+| T-7 | **`nan` policy limit disables the gateway single-limit check** | T3 / E4 | L / H | Policy engine still escalates | `nan > 100` is false so no clamp (`policy.py:85`); gateway `min(nan, 100)` is `nan` so `check_single_limit` never fires (`gateway.py:226`); upload returns 500 but the policy is **active**; `/api/system` then returns 500 | **Mitigated** (BT 4.6, policy_validation) [was: **Confirmed** (in-process)] | 4.6 / BT 4.6 |
 | T-8 | Injected instructions in policy text reach the Refunds LLM | T3 / E4 | M / L | Engine is final | Policy chunks are not fenced; parser reads `key: value` lines anywhere if no `policy-rules` block | Code review | 4.3, 7.4 / BT 4.3 |
 | T-9 | Memory poisoning across turns | T1 / E2 | M / L | Planner output still role-checked | Earlier turns go into the planner prompt unfenced (`orchestrator.py:88-89`); persistent `user:` notes are never written, and case outcome notes are never read (dead path) | Code review | 7.1, 7.5 / BT 7.5 |
 | T-10 | Supervisor decision race (double submit) | T4 / E9 | L / L | `order_checks` blocks a second refund | Lock check then act (`main.py:307`) can send duplicate emails | Code review | — |
@@ -156,7 +158,7 @@ and the tests and defences that cover it.
 
 | ID | Threat | Actor / entry | L / I | Current controls | Gap | Status | RT / BT |
 |---|---|---|---|---|---|---|---|
-| R1 | **Admin erases the audit trail with Reset sandbox** | T3 / E10 | M / H | Admin-only endpoint | `db.seed(reset=True)` drops every table, including `audit_log`; contradicts "cannot alter audit logs" | Code review | 8.4 / BT 8.4 |
+| R1 | **Admin erases the audit trail with Reset sandbox** | T3 / E10 | M / H | Admin-only endpoint | `db.seed(reset=True)` drops every table, including `audit_log`; contradicts "cannot alter audit logs" | **Mitigated** (BT R1, audit_protect) [was: Code review] | 8.4 / BT 8.4 |
 | R2 | Insider rewrites the hash chain | T6 | L / H | SHA-256 chain, `/api/audit/verify` | Chain is not anchored outside the DB; a file writer can recompute it; `events.jsonl` is not chained | Code review | 8.4 / BT 8.4 |
 | R3 | Log injection forges entries | T1 / E1-E3 | L / M | JSON lines via `json.dumps` | Verify that newlines in fields cannot split rows | Code review | 8.4 / BT 8.4 |
 
@@ -165,8 +167,8 @@ and the tests and defences that cover it.
 | ID | Threat | Actor / entry | L / I | Current controls | Gap | Status | RT / BT |
 |---|---|---|---|---|---|---|---|
 | I1 | Cross-customer case or profile via chat | T1 / E2 | H / H | `case_scope` | — | Confirmed held (Qwen) | 5.1 / BT 5.1 |
-| I2 | Case-ID enumeration oracle | T1 / E2 | H / L | REST returns 404 for both | Chat says "belongs to another customer" vs "not found" (`gateway.py:192` vs `records.py:76`) | **Confirmed** (Qwen + in-process) | 5.2 / BT 5.2 |
-| I3 | Unauthenticated recon | T2 / E6 | H / M | — | `/health` and `/api/system` return guardrail state, limits, tools, kill-switch state | **Confirmed** (Qwen) | 5.3 / BT 5.3 |
+| I2 | Case-ID enumeration oracle | T1 / E2 | H / L | REST returns 404 for both | Chat says "belongs to another customer" vs "not found" (`gateway.py:192` vs `records.py:76`) | **Mitigated** (BT 5.2, case_scope) [was: **Confirmed** (Qwen + in-process)] | 5.2 / BT 5.2 |
+| I3 | Unauthenticated recon | T2 / E6 | H / M | — | `/health` and `/api/system` return guardrail state, limits, tools, kill-switch state | **Mitigated** (BT 5.3, recon_auth) [was: **Confirmed** (Qwen)] | 5.3 / BT 5.3 |
 | I4 | Admin reads all customer cases | T3 / REST | M / M | — | `GET /api/cases` and `/api/cases/{id}` return every case, description and contact email to admins (`main.py:162-181`) | Code review | 5.4 / BT 5.4 |
 | I5 | Raw bank numbers in some channel | T1, T3 | L / H | Masked in vector DB, drive, profile view; `redact` on audit | Check `/api/llm-calls` raw output and `/api/bus` bodies; masking depends on `output_filter` for the profile view | Code review | 5.5 / BT 5.5 |
 | I6 | System prompt leak | T1 / E2 | M / L | Prompts hold no secrets | — | Confirmed held (Qwen) | 5.6 / BT 5.6 |

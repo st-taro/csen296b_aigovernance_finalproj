@@ -15,8 +15,8 @@ whether guardrails are on, and whether agent authority is active.
 | Role | Screen | Can do | Cannot do |
 |---|---|---|---|
 | Customer | Customer portal | Submit a refund case, view case status, read emails from support, email support, ask the assistant | See other customers' cases or records |
-| Admin | Admin console | Upload, view, search and activate refund policies; view reports and the audit log; reset sandbox data | Approve refunds or change agent permissions |
-| Supervisor | Supervisor dashboard | Review escalated cases, approve/deny/return them, revoke or restore agent authority, view reports, audit log, bus messages and LLM calls | Edit audit logs |
+| Admin | Admin console | Upload, view and search refund policies and request their activation; view reports and the audit log; reset sandbox data | Approve refunds or change agent permissions |
+| Supervisor | Supervisor dashboard | Review escalated cases, approve/deny/return them, approve or reject policy activations, revoke or restore agent authority, view reports, audit log, bus messages and LLM calls | Edit audit logs |
 
 Demo accounts: `alice`, `bob`, `carol`, `dave`, `erin` (password `<name>123`),
 `admin` / `admin123`, `supervisor` / `super123`.
@@ -63,10 +63,14 @@ arrived damaged, please refund $79.99"*.
    purchase_window_days: 30
    eligible_reasons: damaged, not_delivered, wrong_item, duplicate_charge
    ```
-3. The Records agent indexes it in the vector database and it becomes active
-   immediately. Any clamped values are shown as warnings.
-4. Use **Search policies** to check that retrieval returns the right rule.
-   Older versions stay listed and can be re-activated.
+3. The Records agent indexes it in the vector database. Limits above the org
+   maximum are clamped (shown as warnings); invalid values (non-numbers,
+   negative or zero limits, a window over 90 days, an empty or unknown reason
+   list) reject the upload. Rules are read only from the `policy-rules` block.
+4. The new policy is **not active yet**: it waits for a supervisor to approve
+   it under **Policy approvals** (two-person rule). Older versions stay listed;
+   **Request activation** on one also needs a supervisor's approval.
+5. Use **Search policies** to check that retrieval returns the right rule.
 
 ### Customer: request a refund
 1. Sign in as a customer; **New refund** is the first tab.
@@ -89,7 +93,10 @@ arrived damaged, please refund $79.99"*.
 4. **Kill switch** -> Revoke agent authority stops all agent refund and email
    actions at once. New cases go `on_hold`. Restore authority on the same
    screen, then open each on-hold case and choose **Re-run agent workflow**.
-5. **Observability** shows the configuration, signed inter-agent bus messages
+5. **Policy approvals** lists policies an admin wants to activate. Compare the
+   requested rules with the active policy, then approve or reject. You cannot
+   approve a request you made yourself.
+6. **Observability** shows the configuration, signed inter-agent bus messages
    and recent LLM calls.
 
 ### Reports (Admin or Supervisor)
@@ -100,6 +107,7 @@ total against the $500 limit.
 ### Audit log (Admin or Supervisor)
 Every agent action, block, supervisor action and kill-switch change is logged
 with a decision ID. **Verify chain** checks that no row has been altered.
+Reset sandbox (Admin) keeps the audit log and records the reset in it.
 
 ## What the agent will not do
 

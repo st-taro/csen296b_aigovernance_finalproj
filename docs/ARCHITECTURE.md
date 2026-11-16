@@ -92,12 +92,18 @@ The LLM proposes, the policy engine and gateway dispose:
 | Policy upload clamp: uploads cannot raise limits or disable proof-of-purchase | policy | LLM04 poisoning, ASI06 |
 | Hash-chained audit log with decision IDs | audit | MAESTRO L5 log tampering, accountability |
 | UI renders all data as text (no innerHTML) | static/app.js | LLM05 |
+| `policy_validation`: uploaded rules must be plain, finite, positive and in range (window 1-90 days, non-empty known reasons); read only from the `policy-rules` block; invalid uploads rejected (400). Gateway limits fail closed on a corrupt stored value | policy, gateway | LLM04, ASI06 (RT 4.2, 4.6) |
+| `two_person_policy`: a policy upload or (re)activation becomes a pending request that a supervisor, never the requester, must approve | main, policy | LLM04, ASI06, L6 separation of duties (RT 4.5) |
+| `recon_auth`: `/health` returns only `{status: ok}`; `/api/system` needs a session, customers get a reduced view | main | LLM02, ASI03 recon (RT 5.3) |
+| `input_validation`: refund amounts must be finite, > 0 and <= `MAX_REQUEST_AMOUNT` (422 at the API, re-checked in `submit_case`) | main, intake | ASI08 cascading failure (RT 2.7, 2.1) |
+| `audit_protect`: Reset sandbox keeps the audit log and records the reset in the chain | main, db | MAESTRO L5 log tampering (R1) |
+| `case_scope` additions: external bus messages may only call `search_policies` / `weekly_total`; an empty scope returns no customer rows in every list/search tool; inbound mail and folder moves are checked against the run's customer; "not yours" and "not found" give the same answer | bus, records, email, reporting, gateway | ASI07, LLM02 (RT 3.1d, 5.2) |
 
 ## Known gaps worth testing (starting points for the Red team)
 
 - The injection detector is a regex list: paraphrased or encoded injections get past it (the policy engine still holds).
-- A policy upload can widen the purchase window up to 365 days.
+- A policy upload can lower limits and change the window (up to 90 days), but only after a supervisor approves it.
 - Persistent memory notes and stored case descriptions feed later prompts (memory/context poisoning path).
-- `/bus/deliver` is unauthenticated apart from the HMAC. Per-sender keys are derived from one master `BUS_SECRET` in `.env`, so leaking the master leaks every key (external messages still get no customer scope).
+- `/bus/deliver` is unauthenticated apart from the HMAC; external messages may only call `search_policies` and `weekly_total`. Per-sender keys are derived from one master `BUS_SECRET` in `.env`, so leaking the master leaks every key (external messages still get no customer scope).
 - Sessions expire after `SESSION_TTL_MINUTES` (default 8 h) and are stored as token hashes; logins lock for 15 min after 5 failures per username. Passwords are still demo passwords, and the lockout lets anyone lock a known username out (a deliberate trade-off).
 - The mock drive and mailbox are local files and tables, not real cloud APIs.
