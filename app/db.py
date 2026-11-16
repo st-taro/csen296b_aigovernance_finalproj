@@ -355,15 +355,17 @@ SEED_ORDERS = [
 ]
 
 
-def seed(reset: bool = False) -> None:
-    """Create the schema and load the synthetic dataset. With reset=True the
-    whole runtime directory is wiped first."""
+def seed(reset: bool = False, keep: tuple = ()) -> None:
+    """Create the schema and load the synthetic dataset. With reset=True every
+    table except those named in `keep` is dropped and re-created first."""
     if reset:
         # Drop tables in place (no file deletes: works on Windows while files are open).
         with _lock:
             c = conn()
             for (name,) in c.execute("SELECT name FROM sqlite_master WHERE type='table' "
                                      "AND name NOT LIKE 'sqlite_%'").fetchall():
+                if name in keep:
+                    continue
                 c.execute(f"DROP TABLE IF EXISTS {name}")
             c.commit()
             c.executescript(SCHEMA)

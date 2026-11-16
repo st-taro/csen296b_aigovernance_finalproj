@@ -339,3 +339,29 @@ def test_rt_4_5_monitor_mode_activates_at_once(client, disable, original_policy)
                     data={"title": "BT 4.5 monitor", "text": rules_doc(single_refund_limit=90)}).json()
     assert r["active"] is True and policy.active_policy()["id"] == r["id"]
     assert last_audit("two_person_policy", "would_block") is not None
+
+
+# ---------------------------------------------------------------------------
+# R1 (RT 8.4): Reset sandbox must not erase the audit log (control: audit_protect)
+# ---------------------------------------------------------------------------
+def test_r1_reset_keeps_audit_log(client):
+    first = db.q1("SELECT seq, hash FROM audit_log ORDER BY seq LIMIT 1")
+    n_before = db.q1("SELECT COUNT(*) AS n FROM audit_log")["n"]
+    r = client.post("/api/admin/reset-sandbox", headers=login(client, "admin", "admin123")).json()
+    assert r["ok"] and "kept" in r["note"]
+    assert db.q1("SELECT seq, hash FROM audit_log ORDER BY seq LIMIT 1") == first
+    assert db.q1("SELECT COUNT(*) AS n FROM audit_log")["n"] > n_before
+    assert last_audit("audit_protect", "info")["tool"] == "reset_sandbox"
+    v = client.get("/api/audit/verify", headers=login(client, "supervisor")).json()
+    assert v["ok"] and v["rows"] > n_before
+    # the data itself was re-seeded and lockouts were cleared (the red-team runner relies on this)
+    assert db.q1("SELECT COUNT(*) AS n FROM cases")["n"] == 1
+    assert db.q1("SELECT COUNT(*) AS n FROM login_failures")["n"] == 0
+
+
+def test_r1_monitor_mode_erases_and_logs(client, disable):
+    disable("audit_protect")
+    n_before = db.q1("SELECT COUNT(*) AS n FROM audit_log")["n"]
+    client.post("/api/admin/reset-sandbox", headers=login(client, "admin", "admin123"))
+    assert db.q1("SELECT COUNT(*) AS n FROM audit_log")["n"] < n_before
+    assert last_audit("audit_protect", "would_block") is not None

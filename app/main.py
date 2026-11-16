@@ -490,14 +490,29 @@ async def bus_deliver(request: Request):
 
 @app.post("/api/admin/reset-sandbox")
 def reset_sandbox(user: User = Depends(require("admin"))):
-    """Wipe and re-seed all synthetic data (for repeatable red-team runs)."""
+    """Wipe and re-seed all synthetic data (for repeatable red-team runs).
+
+    R1: with audit_protect on, the hash-chained audit log survives the reset
+    (an admin must not be able to erase the evidence trail, and the spec says
+    no one alters audit logs); the reset itself is recorded in the chain."""
     import shutil
+    actor = f"admin:{user.username}"
+    protect = config.control_enabled("audit_protect")
+    rows_before = db.q1("SELECT COUNT(*) AS n FROM audit_log")["n"]
     vectorstore.wipe()
     shutil.rmtree(config.DRIVE_DIR, ignore_errors=True)
-    db.seed(reset=True)
+    db.seed(reset=True, keep=("audit_log",) if protect else ())
     startup()
     orchestrator.SESSION_MEMORY.clear()
-    return {"ok": True, "note": "sandbox re-seeded; all sessions were cleared, sign in again"}
+    if protect:
+        did = audit.record(actor, "info", tool="reset_sandbox", control="audit_protect",
+                           reason=f"sandbox data re-seeded; audit log preserved ({rows_before} earlier rows)")
+        note = "sandbox re-seeded; the audit log was kept; all sessions were cleared, sign in again"
+    else:
+        did = controls.violation("audit_protect", f"sandbox reset erased the audit log ({rows_before} rows)",
+                                 actor, tool="reset_sandbox")[1]
+        note = "sandbox re-seeded; the audit log was erased (audit_protect is off); sign in again"
+    return {"ok": True, "decision_id": did, "note": note}
 
 
 # ---------------------------------------------------------------------------

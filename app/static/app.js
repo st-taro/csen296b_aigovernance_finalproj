@@ -352,7 +352,7 @@ async function viewAudit() {
 async function viewSandbox() {
   const out = h("div");
   $view().replaceChildren(h("div", { class: "panel" }, h("h2", {}, "Sandbox"),
-    h("p", {}, "Re-seed all synthetic data (customers, orders, cases, emails, policies, audit log). Use between red-team runs."),
+    h("p", {}, "Re-seed all synthetic data (customers, orders, cases, emails, policies). The audit log is kept and records the reset. Use between red-team runs."),
     h("button", { class: "btn danger", onclick: async () => {
       if (!confirm("Wipe and re-seed the sandbox?")) return;
       try { const r = await api("/api/admin/reset-sandbox", { method: "POST" }); out.replaceChildren(h("div", { class: "msg ok" }, r.note)); setTimeout(logout, 1500); }
