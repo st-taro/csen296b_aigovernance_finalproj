@@ -64,14 +64,18 @@ function traceTable(trace) {
 async function renderSysbar() {
   const bar = document.getElementById("sysbar");
   bar.replaceChildren();
+  if (!session) return;   // /api/system needs a session (recon_auth); customers get a reduced view
   try {
     const s = await api("/api/system");
     bar.append(h("span", { class: "pill" }, "LLM: " + s.llm_provider + (s.llm_provider === "mock" ? (s.llm_mock_naive ? " (naive)" : "") : " / " + s.llm_model)));
-    bar.append(h("span", { class: "pill " + (s.guardrails && !s.guardrail_disable.length ? "ok" : "bad") },
-      s.guardrails ? (s.guardrail_disable.length ? "Guardrails partly off: " + s.guardrail_disable.join(", ") : "Guardrails on") : "Guardrails OFF (monitor only)"));
+    if (s.guardrails !== undefined) {
+      const off = s.guardrail_disable || [];
+      bar.append(h("span", { class: "pill " + (s.guardrails && !off.length ? "ok" : "bad") },
+        s.guardrails ? (off.length ? "Guardrails partly off: " + off.join(", ") : "Guardrails on") : "Guardrails OFF (monitor only)"));
+    }
     bar.append(h("span", { class: "pill " + (s.agent_authority && s.agent_authority.revoked ? "bad" : "ok") },
       s.agent_authority && s.agent_authority.revoked ? "Agent authority REVOKED" : "Agent authority active"));
-    bar.append(h("span", { class: "pill" }, "Vector DB: " + s.vector_store));
+    if (s.vector_store) bar.append(h("span", { class: "pill" }, "Vector DB: " + s.vector_store));
   } catch (e) { bar.append(h("span", { class: "pill bad" }, "server unreachable")); }
 }
 

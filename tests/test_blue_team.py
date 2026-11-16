@@ -218,3 +218,34 @@ def test_rt_5_2_no_case_id_enumeration_oracle(client):
     # REST already answered the same for both
     assert client.get("/api/cases/CASE-0001", headers=h).status_code == 404
     assert client.get("/api/cases/CASE-9999", headers=h).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# RT 5.3: no unauthenticated reconnaissance (control: recon_auth)
+# ---------------------------------------------------------------------------
+RECON_KEYS = ("guardrails", "guardrail_disable", "hard_single_limit", "active_policy", "agents", "vector_store")
+
+
+def test_rt_5_3_anonymous_recon_blocked(client):
+    assert client.get("/api/system").status_code == 401
+    assert client.get("/health").json() == {"status": "ok"}
+    assert last_audit("recon_auth", "blocked") is not None
+
+
+def test_rt_5_3_customer_gets_reduced_view(client):
+    s = client.get("/api/system", headers=login(client, "alice", "alice123")).json()
+    assert not any(k in s for k in RECON_KEYS), s
+    assert s["agent_authority"] == {"revoked": False}
+
+
+def test_rt_5_3_staff_get_full_view(client):
+    for user, pw in (("admin", "admin123"), ("supervisor", "super123")):
+        s = client.get("/api/system", headers=login(client, user, pw)).json()
+        assert all(k in s for k in RECON_KEYS), (user, s.keys())
+
+
+def test_rt_5_3_monitor_mode_restores_old_behaviour(client, disable):
+    disable("recon_auth")
+    assert client.get("/api/system").status_code == 200
+    assert "guardrails" in client.get("/health").json()
+    assert last_audit("recon_auth", "would_block") is not None

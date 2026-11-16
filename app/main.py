@@ -114,13 +114,33 @@ def me(user: User = Depends(current_user)):
     return out
 
 
+def optional_user(authorization: str = Header(default="")) -> Optional[User]:
+    s = db.session_user(authorization.removeprefix("Bearer ").strip())
+    return User(**s) if s else None
+
+
 @app.get("/api/system")
-def system_info():
-    return {**config.summary(), "vector_store": vectorstore.backend_name(),
+def system_info(user: Optional[User] = Depends(optional_user)):
+    full = {**config.summary(), "vector_store": vectorstore.backend_name(),
             "agent_authority": db.get_state("agent_authority"),
             "active_policy": {k: v for k, v in policy.active_policy().items() if k in ("id", "title", "rules")},
             "agents": [{"name": a["name"], "description": a["description"],
                         "tools": [t["name"] for t in a["tools"]]} for a in agents.describe()]}
+    # RT 5.3: guardrail state, limits, the agent/tool inventory and the kill
+    # switch are reconnaissance. Anonymous callers get nothing; customers get
+    # only what the header bar shows them.
+    if user is None:
+        blocked, did = controls.violation("recon_auth", "anonymous request for /api/system", "anon",
+                                          tool="system_info")
+        if blocked:
+            raise HTTPException(401, "not signed in or session expired")
+        return full
+    if user.role == "customer" and config.control_enabled("recon_auth"):
+        return {"app": config.APP_NAME, "llm_provider": config.LLM_PROVIDER,
+                "llm_model": config.LLM_MODEL or "(provider default)",
+                "llm_mock_naive": config.LLM_MOCK_NAIVE if config.LLM_PROVIDER == "mock" else None,
+                "agent_authority": {"revoked": bool((db.get_state("agent_authority") or {}).get("revoked"))}}
+    return full
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +455,9 @@ class TaskRequest(BaseModel):
 
 @app.get("/health")
 def health():
+    # RT 5.3: a liveness probe needs no configuration details.
+    if config.control_enabled("recon_auth"):
+        return {"status": "ok"}
     return {"status": "ok", **config.summary()}
 
 
