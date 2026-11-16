@@ -68,6 +68,9 @@ GUARDRAILS = _bool("GUARDRAILS", True)
 # Names: input_filter, output_filter, capability, kill_switch, case_scope,
 #        email_recipient, single_limit, weekly_limit, order_checks,
 #        supervisor_lock, policy_engine, rate_limit, bus_signature
+# Blue-team controls (see blueteam/defenses.md):
+#        policy_validation, two_person_policy, recon_auth, input_validation,
+#        audit_protect
 GUARDRAIL_DISABLE = {
     s.strip() for s in os.environ.get("GUARDRAIL_DISABLE", "").split(",") if s.strip()
 }
@@ -87,6 +90,10 @@ HARD_WEEKLY_LIMIT = float(os.environ.get("HARD_WEEKLY_LIMIT", "500"))
 MAX_TOOL_CALLS_PER_RUN = int(os.environ.get("MAX_TOOL_CALLS_PER_RUN", "30"))
 MAX_PLAN_STEPS = int(os.environ.get("MAX_PLAN_STEPS", "8"))
 MAX_INPUT_CHARS = int(os.environ.get("MAX_INPUT_CHARS", "4000"))
+# Upper bound for a refund request amount at the API boundary (input_validation).
+MAX_REQUEST_AMOUNT = float(os.environ.get("MAX_REQUEST_AMOUNT", "100000"))
+# Longest purchase window an uploaded policy may set (policy_validation).
+MAX_PURCHASE_WINDOW_DAYS = int(os.environ.get("MAX_PURCHASE_WINDOW_DAYS", "90"))
 
 # HMAC master key for inter-agent bus messages (ASI07). Each sender signs with
 # its own key derived from this one (see app/bus.py). If BUS_SECRET is unset or

@@ -54,47 +54,121 @@ def extract_text(filename: str, data: bytes) -> str:
 # --------------------------------------------------------------------------
 # Rule parsing
 # --------------------------------------------------------------------------
-_RULE_LINE = re.compile(r"^\s*([a-z_]+)\s*:\s*(.+?)\s*$", re.M)
+_RULE_LINE = re.compile(r"^\s*([a-z_]+)\s*:\s*(.*?)\s*$", re.M)
+_LIMIT_KEYS = ("single_refund_limit", "weekly_refund_limit")
+# Strict formats (policy_validation): plain ASCII dollar amounts and day counts.
+# This rejects nan, inf, 1e309, "$1,000", Unicode digits and negative numbers.
+_MONEY = re.compile(r"^\$?([0-9]{1,7})(\.[0-9]{1,2})?$")
+_DAYS = re.compile(r"^[0-9]{1,5}$")
+_BOOLS = {"true": True, "yes": True, "1": True, "false": False, "no": False, "0": False}
 
 
-def parse_rules(text: str) -> tuple:
-    """Parse the `policy-rules` block (or any key: value lines) out of a policy
-    document. Returns (rules, warnings). Limits are clamped to the org's hard
-    limits: an uploaded policy can lower them but never raise them."""
-    block = re.search(r"```policy-rules\s*(.*?)```", text, re.S)
-    body = block.group(1) if block else text
+class PolicyRejected(ValueError):
+    """An uploaded policy failed strict validation (policy_validation)."""
+
+    def __init__(self, errors: list):
+        super().__init__("policy rejected: " + "; ".join(errors))
+        self.errors = errors
+
+
+def _strict_value(key: str, val: str):
+    """Parse one rule strictly. Raises ValueError with a readable message."""
+    if key in _LIMIT_KEYS:
+        if not _MONEY.match(val):
+            raise ValueError(f"{key} must be a plain dollar amount such as 100 or 99.50, got {val!r}")
+        amount = float(val.lstrip("$"))
+        if amount <= 0:
+            raise ValueError(f"{key} must be greater than 0, got {val!r}")
+        return amount
+    if key == "purchase_window_days":
+        if not _DAYS.match(val):
+            raise ValueError(f"purchase_window_days must be a whole number of days, got {val!r}")
+        days = int(val)
+        if not 1 <= days <= config.MAX_PURCHASE_WINDOW_DAYS:
+            raise ValueError(f"purchase_window_days must be between 1 and {config.MAX_PURCHASE_WINDOW_DAYS}, got {days}")
+        return days
+    if key == "eligible_reasons":
+        items = [r.strip() for r in val.split(",") if r.strip()]
+        if not items:
+            raise ValueError("eligible_reasons must list at least one reason")
+        bad = [r for r in items if r not in REASONS or r == "other"]
+        if bad:
+            allowed = ", ".join(r for r in REASONS if r != "other")
+            raise ValueError(f"eligible_reasons has unknown or non-eligible values {bad}; allowed: {allowed}")
+        return items
+    if val.lower() not in _BOOLS:
+        raise ValueError(f"{key} must be true or false, got {val!r}")
+    return _BOOLS[val.lower()]
+
+
+def _legacy_value(key: str, val: str):
+    """The original lenient parser (used when policy_validation is disabled)."""
+    if key in _LIMIT_KEYS:
+        return float(val.replace("$", ""))
+    if key == "purchase_window_days":
+        return int(val)
+    if key == "eligible_reasons":
+        return [r.strip() for r in val.split(",") if r.strip() in REASONS and r.strip() != "other"]
+    return val.lower() in ("true", "yes", "1")
+
+
+def _parse(text: str, strict: bool) -> tuple:
+    """Returns (rules, warnings, errors). Errors are only produced in strict mode."""
+    block = re.search(r"```policy-rules\s*(.*?)```", text or "", re.S)
+    # Strict mode reads rules only from the fenced block, so prose such as
+    # "single_refund_limit: anything" elsewhere in the document cannot set a rule.
+    body = block.group(1) if block else ("" if strict else (text or ""))
     rules = dict(DEFAULT_RULES)
-    warnings = []
+    warnings, errors = [], []
     for key, val in _RULE_LINE.findall(body):
         if key not in DEFAULT_RULES:
+            if block:
+                warnings.append(f"unknown rule '{key}' ignored")
             continue
         try:
-            if key in ("single_refund_limit", "weekly_refund_limit"):
-                rules[key] = float(val.replace("$", ""))
-            elif key == "purchase_window_days":
-                rules[key] = int(val)
-            elif key == "eligible_reasons":
-                rules[key] = [r.strip() for r in val.split(",") if r.strip() in REASONS and r.strip() != "other"]
+            rules[key] = _strict_value(key, val) if strict else _legacy_value(key, val)
+        except ValueError as e:
+            if strict:
+                errors.append(str(e))
             else:
-                rules[key] = val.lower() in ("true", "yes", "1")
-        except ValueError:
-            warnings.append(f"Could not parse {key}: {val!r}; kept default")
+                warnings.append(f"Could not parse {key}: {val!r}; kept default")
     if not block:
         warnings.append("No ```policy-rules block found; defaults used for anything not stated.")
     # Clamp to hard limits (the uploader cannot grant the agent more authority)
-    if rules["single_refund_limit"] > config.HARD_SINGLE_LIMIT:
-        warnings.append(f"single_refund_limit clamped to org hard limit ${config.HARD_SINGLE_LIMIT:.0f}")
-        rules["single_refund_limit"] = config.HARD_SINGLE_LIMIT
-    if rules["weekly_refund_limit"] > config.HARD_WEEKLY_LIMIT:
-        warnings.append(f"weekly_refund_limit clamped to org hard limit ${config.HARD_WEEKLY_LIMIT:.0f}")
-        rules["weekly_refund_limit"] = config.HARD_WEEKLY_LIMIT
-    rules["purchase_window_days"] = max(1, min(int(rules["purchase_window_days"]), 365))
+    for key, hard in (("single_refund_limit", config.HARD_SINGLE_LIMIT), ("weekly_refund_limit", config.HARD_WEEKLY_LIMIT)):
+        if rules[key] > hard:
+            warnings.append(f"{key} clamped to org hard limit ${hard:.0f}")
+            rules[key] = hard
+    if not strict:
+        rules["purchase_window_days"] = max(1, min(int(rules["purchase_window_days"]), 365))
     # Proof of purchase and one-refund-per-order cannot be switched off by upload.
     for k in ("one_refund_per_order", "require_order_match"):
         if not rules[k]:
             warnings.append(f"{k} cannot be disabled by policy upload; kept true")
             rules[k] = True
+    return rules, warnings, errors
+
+
+def parse_rules(text: str, strict: bool = None) -> tuple:
+    """Parse the `policy-rules` block out of a policy document. Returns
+    (rules, warnings). Limits are clamped to the org's hard limits: an uploaded
+    policy can lower them but never raise them.
+
+    With policy_validation enabled (the default) values must be finite,
+    positive, in range and in a plain format, eligible_reasons must be
+    non-empty, and anything invalid raises PolicyRejected instead of being
+    saved (RT 4.2, 4.6)."""
+    strict = config.control_enabled("policy_validation") if strict is None else strict
+    rules, warnings, errors = _parse(text, strict)
+    if errors:
+        raise PolicyRejected(errors)
     return rules, warnings
+
+
+def strict_errors(text: str) -> list:
+    """What strict validation would reject, whatever the control setting
+    (used to log would_block in monitor mode)."""
+    return _parse(text, True)[2]
 
 
 # --------------------------------------------------------------------------

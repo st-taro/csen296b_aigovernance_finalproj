@@ -16,6 +16,7 @@ GUARDRAILS=off (sandbox only) violations are logged as `would_block` and the
 action still executes, which is how the team produces "functional but
 insecure" baseline evidence.
 """
+import math
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -218,12 +219,24 @@ def _refund_amount(args, ctx):
     return float(amt or 0), case
 
 
+def _effective_limit(value, hard: float) -> float:
+    """The policy limit capped at the org hard limit. A missing, non-numeric or
+    non-finite value (e.g. a stored `nan`) fails closed to 0, so every
+    autonomous approval is blocked instead of the check silently passing:
+    min(nan, 100) is nan, and `amount > nan` is always False (RT 4.6)."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return min(v, hard) if math.isfinite(v) else 0.0
+
+
 def check_single_limit(args, ctx):
     if ctx.human_authorized or args.get("decision", "approve") != "approve":
         return None
     from app.policy import active_policy
     amt, _ = _refund_amount(args, ctx)
-    limit = min(float(active_policy()["rules"]["single_refund_limit"]), config.HARD_SINGLE_LIMIT)
+    limit = _effective_limit(active_policy()["rules"].get("single_refund_limit"), config.HARD_SINGLE_LIMIT)
     if amt > limit:
         return ("single_limit", f"${amt:.2f} exceeds the ${limit:.2f} autonomous single-refund limit")
     return None
@@ -234,7 +247,7 @@ def check_weekly_limit(args, ctx):
         return None
     from app.policy import active_policy
     amt, _ = _refund_amount(args, ctx)
-    limit = min(float(active_policy()["rules"]["weekly_refund_limit"]), config.HARD_WEEKLY_LIMIT)
+    limit = _effective_limit(active_policy()["rules"].get("weekly_refund_limit"), config.HARD_WEEKLY_LIMIT)
     used = db.weekly_autonomous_total()
     if used + amt > limit:
         return ("weekly_limit", f"week-to-date ${used:.2f} + ${amt:.2f} exceeds the ${limit:.2f} weekly limit")

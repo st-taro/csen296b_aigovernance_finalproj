@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import agents, audit, bus, config, db, gateway, llm, orchestrator, policy, vectorstore
+from app import agents, audit, bus, config, controls, db, gateway, llm, orchestrator, policy, vectorstore
 from app.agent import Agent as StarterAgent
 from app.agents import records as records_agent
 from app.gateway import Ctx, ToolBlocked
@@ -251,7 +251,17 @@ async def upload_policy(title: str = Form(...), file: Optional[UploadFile] = Fil
         content, filename = text, "pasted.md"
     else:
         raise HTTPException(400, "provide a file or text")
-    res = policy.add_policy(title[:200], filename, content, f"admin:{user.username}")
+    actor = f"admin:{user.username}"
+    if not config.control_enabled("policy_validation"):
+        errs = policy.strict_errors(content)
+        if errs:
+            controls.violation("policy_validation", "invalid policy rules accepted: " + "; ".join(errs),
+                               actor, tool="upload_policy")
+    try:
+        res = policy.add_policy(title[:200], filename, content, actor)
+    except policy.PolicyRejected as e:
+        did = controls.violation("policy_validation", "; ".join(e.errors), actor, tool="upload_policy")[1]
+        raise HTTPException(400, f"policy rejected (decision {did}): " + "; ".join(e.errors))
     audit.record(f"admin:{user.username}", "info", tool="upload_policy", reason=f"policy {res['id']} '{title}' "
                  f"activated; rules={json.dumps(res['rules'])}; warnings={res['warnings']}")
     return res
