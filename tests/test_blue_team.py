@@ -194,3 +194,27 @@ def test_rt_3_1d_monitor_mode_shows_the_leak(client, disable):
     r = client.post("/bus/deliver", json=signed("email", "list_emails")).json()
     assert r["ok"] is True and len(r["result"]) > 0               # baseline: every customer's mail
     assert last_audit("case_scope", "would_block") is not None
+
+
+# ---------------------------------------------------------------------------
+# RT 5.2: chat must not reveal which case IDs exist (control: case_scope)
+# ---------------------------------------------------------------------------
+def _chat_errors(c, h, cid):
+    import re
+    body = c.post("/api/chat", headers=h, json={"message": f"What is the status of case {cid}?"}).json()
+    return [re.sub(r"CASE-\d{4}", "CASE-X", r.get("error") or "") for r in body["results"]], body
+
+
+def test_rt_5_2_no_case_id_enumeration_oracle(client):
+    h = login(client, "alice", "alice123")
+    exists_other, body1 = _chat_errors(client, h, "CASE-0001")     # carol's case
+    missing, body2 = _chat_errors(client, h, "CASE-9999")
+    assert exists_other == missing and exists_other, (exists_other, missing)
+    assert "another customer" not in str(body1)
+    # the audit log still records the real reason for investigators
+    row = db.q1("SELECT reason FROM audit_log WHERE control='case_scope' AND case_id='CASE-0001' "
+                "ORDER BY seq DESC LIMIT 1")
+    assert "another customer" in row["reason"]
+    # REST already answered the same for both
+    assert client.get("/api/cases/CASE-0001", headers=h).status_code == 404
+    assert client.get("/api/cases/CASE-9999", headers=h).status_code == 404

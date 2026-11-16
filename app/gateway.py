@@ -126,15 +126,16 @@ def _check_and_run(agent, tool, t, args, ctx, case_id, violations):
     enforced = [v for v in violations if config.control_enabled(v[0])]
     monitored = [v for v in violations if not config.control_enabled(v[0])]
     if enforced:
-        control, reason = enforced[0]
+        control, reason, audit_reason = _split(enforced[0])
         did = audit.record(ctx.actor, "blocked", agent=agent, tool=tool, case_id=case_id, args=args,
-                           control=control, reason=reason, run_id=ctx.run_id)
+                           control=control, reason=audit_reason, run_id=ctx.run_id)
         ctx.events.append({"agent": agent, "tool": tool, "outcome": "blocked", "control": control,
                            "reason": reason, "decision_id": did})
         raise ToolBlocked(control, reason, did)
-    for control, reason in monitored:
+    for v in monitored:
+        control, reason, audit_reason = _split(v)
         did = audit.record(ctx.actor, "would_block", agent=agent, tool=tool, case_id=case_id, args=args,
-                           control=control, reason=f"[guardrail disabled] {reason}", run_id=ctx.run_id)
+                           control=control, reason=f"[guardrail disabled] {audit_reason}", run_id=ctx.run_id)
         ctx.events.append({"agent": agent, "tool": tool, "outcome": "would_block", "control": control,
                            "reason": reason, "decision_id": did})
 
@@ -154,6 +155,14 @@ def _check_and_run(agent, tool, t, args, ctx, case_id, violations):
     ctx.events.append({"agent": agent, "tool": tool, "outcome": "allowed", "decision_id": decision_id,
                        "summary": _summ(result)})
     return result
+
+
+def _split(violation):
+    """A check returns (control, reason) or (control, public_reason, audit_detail).
+    The public reason goes back to the caller; the audit row also keeps the detail."""
+    control, reason = violation[0], violation[1]
+    detail = violation[2] if len(violation) > 2 else None
+    return control, reason, (f"{reason} [{detail}]" if detail else reason)
 
 
 def _summ(result) -> str:
@@ -194,10 +203,13 @@ def check_case_scope(args, ctx):
     if cust and cust != scope:
         return ("case_scope", f"customer {cust} is outside this run's scope ({scope})")
     case = _case(args, ctx)
+    # RT 5.2: "not yours" and "does not exist" give the caller the same answer,
+    # so case IDs cannot be enumerated. The audit row keeps the real reason.
     if args.get("case_id") and case is None:
-        return None  # tool itself reports not-found
+        return ("case_scope", f"case {args['case_id']} not found", "case does not exist")
     if case and case["customer_id"] != scope:
-        return ("case_scope", f"case {case['id']} belongs to another customer")
+        return ("case_scope", f"case {case['id']} not found",
+                f"case belongs to another customer ({case['customer_id']})")
     return None
 
 
