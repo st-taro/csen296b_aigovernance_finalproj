@@ -1,9 +1,14 @@
 # Blue-Team Build Plan: Refund Me Maybe
 
 The complete blue-team plan. It covers what is already built (Phase 1) and
-what is still to build (Phases 2 and 3). IDs match the red-team plan
-([../redteam/plan.md](../redteam/plan.md)): `BT 2.4` answers `RT 2.4`. Threat
-IDs (`T-3`, `S4`, ...) refer to [../threat_model/threat_model.md](../threat_model/threat_model.md).
+what is still to build (Phases 2 and 3).
+
+Each defence is named the same way as its commit: what it does, followed by
+the red-team tests it answers, e.g. "Strict policy validation (RT 4.2, 4.6)".
+RT numbers refer to [../redteam/plan.md](../redteam/plan.md). Threat IDs
+(`T-3`, `S4`, `R1`, ...) refer to the threat register in
+[../threat_model/threat_model.md](../threat_model/threat_model.md); `R1`, `R2`
+and `T-10` appear in brackets where there is no red-team test of their own.
 
 **Branch:** `blue-team`. **Tests:** [../tests/test_blue_team.py](../tests/test_blue_team.py).
 Run `python -m pytest -q` for all tests, or `python -m pytest -q tests/test_blue_team.py`.
@@ -12,32 +17,32 @@ Run `python -m pytest -q` for all tests, or `python -m pytest -q tests/test_blue
 
 `Done` = built, tested and committed · `Planned` = not built yet.
 
-| Phase | BT | Threat | Control | Status |
+| Phase | Defence | Threat | Control | Status |
 |---|---|---|---|---|
-| 1 | 4.2, 4.6 Strict policy validation | T-6, T-7 | `policy_validation` | Done |
-| 1 | 3.1d Empty scope means no customer data | S3 | `case_scope` | Done |
-| 1 | 5.2 No case-ID enumeration in chat | I2 | `case_scope` | Done |
-| 1 | 5.3 No unauthenticated recon | I3 | `recon_auth` | Done |
-| 1 | 2.7, 2.1 Reject non-finite / out-of-range amounts | T-5 | `input_validation` | Done |
-| 1 | 4.5 Two-person rule for policy activation | T-6 | `two_person_policy` | Done |
-| 1 | R1 Reset sandbox keeps the audit log | R1 | `audit_protect` | Done |
-| 2 | 1.3 Validate `order_id`, reason, description | T-2 | `input_validation` | Planned |
-| 2 | 2.3, 2.4 Atomic refunds across workers + safe seeding | T-3 | `atomic_refunds` | Planned |
-| 2 | 3.1b, 3.1c Shared replay cache, message-ID checks | S2 | `bus_signature` | Planned |
-| 2 | T-10 Atomic supervisor decision | T-10 | `supervisor_lock` | Planned |
-| 2 | 7.5, 4.3 Fence chat history and policy text | T-8, T-9 | `input_filter` | Planned |
-| 2 | 6.1, 6.5 Email recipient and links | I7 | `email_recipient`, `output_filter` | Planned |
-| 2 | 8.2 Keep the kill switch reachable | S4 | `auth_resilience` | Planned |
-| 3 | 6.6, 8.3 Per-user rate limits | D1 | `rate_limit` | Planned |
-| 3 | 7.4 Keyword-stuffed policy chunks | T-8 | `policy_validation` | Planned |
-| 3 | 1.2 Normalise text before the injection filter | T-1 | `input_filter` | Planned |
-| 3 | 4.4 Hardened policy uploads | D4 | `policy_validation` | Planned |
-| 3 | 5.4 Admins don't see case PII | I4 | `pii_minimisation` | Planned |
-| 3 | 5.5 No raw bank numbers in logs | I5 | `output_filter` | Planned |
-| 3 | 8.1 Stop earlier after revocation | K1 | `kill_switch` | Planned |
-| 3 | 7.6 Supervisor approval needs a reason | S5, K3 | `supervisor_review` | Planned |
-| 3 | R2 Anchor the audit chain outside the DB | R2 | `audit_protect` | Planned |
-| 3 | 3.1 Per-agent bus keys, external endpoint off | S3 | `bus_signature` | Planned |
+| 1 | Strict policy validation (RT 4.2, 4.6) | T-6, T-7 | `policy_validation` | Done |
+| 1 | Empty scope means no customer data (RT 3.1d) | S3 | `case_scope` | Done |
+| 1 | Same answer for "not yours" and "not found" (RT 5.2) | I2 | `case_scope` | Done |
+| 1 | No unauthenticated recon (RT 5.3) | I3 | `recon_auth` | Done |
+| 1 | Reject non-finite and out-of-range amounts (RT 2.7, 2.1) | T-5 | `input_validation` | Done |
+| 1 | Two-person rule for policy activation (RT 4.5) | T-6 | `two_person_policy` | Done |
+| 1 | Reset sandbox keeps the audit log (R1, RT 8.4) | R1 | `audit_protect` | Done |
+| 2 | Validate `order_id`, `reason` and description at the boundary (RT 1.3) | T-2 | `input_validation` | Planned |
+| 2 | Refunds stay atomic across worker processes (RT 2.3, 2.4) | T-3 | `atomic_refunds` | Planned |
+| 2 | Shared replay cache and message-ID checks (RT 3.1b, 3.1c) | S2 | `bus_signature` | Planned |
+| 2 | Atomic supervisor decision (T-10) | T-10 | `supervisor_lock` | Planned |
+| 2 | Fence chat history and policy text in prompts (RT 7.5, 4.3) | T-8, T-9 | `input_filter` | Planned |
+| 2 | Email recipient and links (RT 6.1, 6.5) | I7 | `email_recipient`, `output_filter` | Planned |
+| 2 | Keep the kill switch reachable (RT 8.2) | S4 | `auth_resilience` | Planned |
+| 3 | Per-user rate limits (RT 6.6, 8.3) | D1 | `rate_limit` | Planned |
+| 3 | Keyword-stuffed policy chunks (RT 7.4) | T-8 | `policy_validation` | Planned |
+| 3 | Normalise text before the injection filter (RT 1.2) | T-1 | `input_filter` | Planned |
+| 3 | Hardened policy uploads (RT 4.4) | D4 | `policy_validation` | Planned |
+| 3 | Admins don't see case PII (RT 5.4) | I4 | `pii_minimisation` | Planned |
+| 3 | No raw bank numbers in logs (RT 5.5) | I5 | `output_filter` | Planned |
+| 3 | Stop earlier after revocation (RT 8.1) | K1 | `kill_switch` | Planned |
+| 3 | Supervisor approval needs a reason (RT 7.6) | S5, K3 | `supervisor_review` | Planned |
+| 3 | Anchor the audit chain outside the database (R2, RT 8.4) | R2 | `audit_protect` | Planned |
+| 3 | Per-agent bus keys, external endpoint off by default (RT 3.1d) | S3 | `bus_signature` | Planned |
 
 ## Rules every defence follows
 
@@ -66,8 +71,9 @@ have a monitor-mode test showing the old behaviour plus a `would_block` row.
 Shared helper: `app/controls.py` `violation()` blocks or logs `would_block`
 for controls that live outside the gateway.
 
-### BT 4.2 / 4.6: strict policy validation (T-6, T-7) · Done
+### Strict policy validation (RT 4.2, 4.6) · Done
 
+- **Threat:** T-6, T-7.
 - **Control:** new `policy_validation`.
 - **Problem:** the policy parser accepted `nan`, negative and zero limits, an
   empty `eligible_reasons` and a 365-day window. A `nan` limit passed the
@@ -94,8 +100,9 @@ for controls that live outside the gateway.
   fails closed; monitor mode restores the lenient parser.
 - **Red-team effect:** RT 4.2 variants and RT-11 now get 400 → HELD.
 
-### BT 3.1d: empty scope means no customer data (S3) · Done
+### Empty scope means no customer data (RT 3.1d) · Done
 
+- **Threat:** S3.
 - **Control:** `case_scope` (extended).
 - **Problem:** a correctly signed external `/bus/deliver` message runs with
   scope `""`. Several tools filtered only when the scope was truthy, so `""`
@@ -117,8 +124,9 @@ for controls that live outside the gateway.
   Empty-scope tools return nothing, admin reports still work, a customer
   cannot file mail as someone else, and monitor mode shows the leak.
 
-### BT 5.2: no case-ID enumeration in chat (I2) · Done
+### Same answer for "not yours" and "not found" (RT 5.2) · Done
 
+- **Threat:** I2.
 - **Control:** `case_scope`.
 - **Problem:** chat said "belongs to another customer" for an existing case and
   "not found" for a missing one, so it revealed which case IDs exist. REST
@@ -132,8 +140,9 @@ for controls that live outside the gateway.
   once the IDs are normalised; the audit row says "another customer"; REST is
   404 for both.
 
-### BT 5.3: no unauthenticated recon (I3) · Done
+### No unauthenticated recon (RT 5.3) · Done
 
+- **Threat:** I3.
 - **Control:** new `recon_auth`.
 - **Problem:** `/health` and `/api/system` returned guardrail state, limits,
   the active policy, every agent and tool, and the kill-switch state to
@@ -152,8 +161,9 @@ for controls that live outside the gateway.
   control on. Run them with `GUARDRAIL_DISABLE=recon_auth`, or sign in as
   supervisor for that call.
 
-### BT 2.7 / 2.1: reject non-finite and out-of-range amounts (T-5) · Done
+### Reject non-finite and out-of-range amounts (RT 2.7, 2.1) · Done
 
+- **Threat:** T-5.
 - **Control:** new `input_validation`.
 - **Problem:** JSON `NaN` and `Infinity` parse as floats and pass Pydantic. NaN
   crashed the insert (HTTP 500). Infinity was stored and then broke every page
@@ -170,8 +180,9 @@ for controls that live outside the gateway.
 - **Behaviour change:** zero and negative amounts now get 422 at the API
   instead of a "denied" case.
 
-### BT 4.5: two-person rule for policy activation (T-6) · Done
+### Two-person rule for policy activation (RT 4.5) · Done
 
+- **Threat:** T-6.
 - **Control:** new `two_person_policy`.
 - **Problem:** one admin could upload a policy and have it live at once, or
   re-activate any older, looser version.
@@ -198,8 +209,9 @@ for controls that live outside the gateway.
   - Re-activating the active policy is a no-op; self-approval is refused;
     monitor mode activates at once.
 
-### BT R1 (RT 8.4): Reset sandbox keeps the audit log · Done
+### Reset sandbox keeps the audit log (R1, RT 8.4) · Done
 
+- **Threat:** R1.
 - **Control:** new `audit_protect`.
 - **Problem:** Reset sandbox dropped every table, including `audit_log`, so an
   admin could erase the evidence trail.
@@ -217,8 +229,9 @@ for controls that live outside the gateway.
 
 ## Phase 2: correctness under attack
 
-### BT 1.3: validate `order_id`, `reason` and description at the boundary (T-2)
+### Validate `order_id`, `reason` and description at the boundary (RT 1.3)
 
+- **Threat:** T-2.
 - **Control:** `input_validation` (exists).
 - **Problem:** `order_id` has no format or length check. It is uppercased,
   stored, put unfenced into the Refunds and email prompts and the case
@@ -235,8 +248,9 @@ for controls that live outside the gateway.
   The SQL-injection payloads from RT 6.2 in `order_id` → 422, never 5xx.
 - **Red-team effect:** RT 6.2 order_id probes now get 422 (still HELD).
 
-### BT 2.3 / 2.4: refunds stay atomic across worker processes (T-3)
+### Refunds stay atomic across worker processes (RT 2.3, 2.4)
 
+- **Threat:** T-3.
 - **Control:** new `atomic_refunds`.
 - **Problem:** `_CONSEQUENTIAL_LOCK` is a `threading.RLock`, so it only works
   inside one process. Under `uvicorn --workers 4`, two workers can both read
@@ -267,8 +281,9 @@ for controls that live outside the gateway.
 - **Red-team effect:** RT 2.4 (`--include-disruptive`) should now be HELD, and
   its single-process pre-seed workaround is no longer needed.
 
-### BT 3.1b / 3.1c: shared replay cache and message-ID checks (S2)
+### Shared replay cache and message-ID checks (RT 3.1b, 3.1c)
 
+- **Threat:** S2.
 - **Control:** `bus_signature` (exists).
 - **Problem:** the replay cache is an in-memory dict per process, so with
   several workers a message can be replayed to another worker. Message IDs
@@ -283,7 +298,7 @@ for controls that live outside the gateway.
   after clearing the in-process state (simulated restart / other worker);
   `null`, `-1`, a 10 KB string and a non-string id → blocked, no 5xx.
 
-### BT T-10: atomic supervisor decision
+### Atomic supervisor decision (T-10)
 
 - **Control:** `supervisor_lock` (exists).
 - **Problem:** `supervisor_decision` checks `supervisor_locked`, then acts.
@@ -297,8 +312,9 @@ for controls that live outside the gateway.
 - **Tests:** two concurrent decisions on one case → exactly one 200 and one
   409, one decision email, at most one refund.
 
-### BT 7.5 / 4.3: fence chat history and policy text in prompts (T-8, T-9)
+### Fence chat history and policy text in prompts (RT 7.5, 4.3)
 
+- **Threat:** T-8, T-9.
 - **Control:** `input_filter` (exists).
 - **Problem:** only the current chat message is wrapped in `wrap_untrusted`.
   Earlier turns (including assistant answers that echo user text) and the
@@ -318,8 +334,9 @@ for controls that live outside the gateway.
   unchanged.
 - **Red-team effect:** affects real-model runs (config D) only.
 
-### BT 6.1 / 6.5: email recipient and links (I7)
+### Email recipient and links (RT 6.1, 6.5)
 
+- **Threat:** I7.
 - **Controls:** `email_recipient` and `output_filter` (exist).
 - **Problem:** the model's `to` is stored on the draft. The gateway blocks the
   send and the orchestrator re-sends to the contact, but the draft still holds
@@ -335,8 +352,9 @@ for controls that live outside the gateway.
   body with `http://evil.test/verify`. Assert the draft and sent mail go to the
   contact, the link is removed, and an audit row records the attempt.
 
-### BT 8.2: keep the kill switch reachable (S4)
+### Keep the kill switch reachable (RT 8.2)
 
+- **Threat:** S4.
 - **Control:** new `auth_resilience`.
 - **Problem:** 5 bad logins lock a username for 15 minutes, counted per
   username only, so anyone can lock out the single supervisor account and
@@ -365,8 +383,9 @@ for controls that live outside the gateway.
 
 ## Phase 3: hardening
 
-### BT 6.6 / 8.3: per-user rate limits (D1)
+### Per-user rate limits (RT 6.6, 8.3)
 
+- **Threat:** D1.
 - **Control:** `rate_limit` (exists, extended).
 - **Build:**
   - Table `rate_events(key, ts)`, shared across workers and cleared by Reset
@@ -383,8 +402,9 @@ for controls that live outside the gateway.
   sends 6 parallel requests per customer, under the limit, so it still tests
   the race.
 
-### BT 7.4: keyword-stuffed policy chunks
+### Keyword-stuffed policy chunks (RT 7.4)
 
+- **Threat:** T-8.
 - **Control:** `policy_validation` (exists).
 - **Build:** when a policy is indexed, skip chunks of 12 or more words whose
   unique-word ratio is below 0.4 (the same measure the RT 7.4 script uses) and
@@ -395,8 +415,9 @@ for controls that live outside the gateway.
   real 30-day rule ranks first for "How many days do I have to request a
   refund?", and a normal policy loses no chunks.
 
-### BT 1.2: normalise text before the injection filter
+### Normalise text before the injection filter (RT 1.2)
 
+- **Threat:** T-1.
 - **Control:** `input_filter` (exists).
 - **Build:** before the regex runs:
   - NFKC-normalise the text;
@@ -412,8 +433,9 @@ for controls that live outside the gateway.
   descriptions is not (false-positive check). The filter stays an early
   warning; the policy engine still decides.
 
-### BT 4.4: hardened policy uploads (D4)
+### Hardened policy uploads (RT 4.4)
 
+- **Threat:** D4.
 - **Control:** `policy_validation` (exists).
 - **Build:**
   - Detect the file type from its first bytes, not the name: `%PDF-` for PDF;
@@ -427,8 +449,9 @@ for controls that live outside the gateway.
 - **Tests:** a zip-bomb DOCX, a `.pdf` that is really text, a malformed PDF,
   a 60-page PDF → 400, server stays up, parse time bounded.
 
-### BT 5.4: admins don't see case PII (I4)
+### Admins don't see case PII (RT 5.4)
 
+- **Threat:** I4.
 - **Control:** new `pii_minimisation`.
 - **Build:** for admins, `GET /api/cases` and `/api/cases/{id}`:
   - mask the contact email (`a***@customer.example`);
@@ -440,8 +463,9 @@ for controls that live outside the gateway.
 - **Tests:** admin responses contain no contact email or description; the
   supervisor's view is unchanged.
 
-### BT 5.5: no raw bank numbers in logs (I5)
+### No raw bank numbers in logs (RT 5.5)
 
+- **Threat:** I5.
 - **Control:** `output_filter` (exists).
 - **Build:**
   - Redact the LLM call log (`raw` and `output`), and stored bus messages and
@@ -452,8 +476,9 @@ for controls that live outside the gateway.
   `/api/bus`, `/api/audit`, `/logs`, the reports and the drive for every
   seeded account number, plain and formatted. None should appear.
 
-### BT 8.1: stop earlier after revocation (K1)
+### Stop earlier after revocation (RT 8.1)
 
+- **Threat:** K1.
 - **Control:** `kill_switch` (exists).
 - **Build:** `process_case` checks agent authority before its first step. When
   revoked, the case goes straight to `on_hold` with no LLM calls, drafts or
@@ -461,8 +486,9 @@ for controls that live outside the gateway.
 - **Tests:** revoke, submit a case → `on_hold`, no new entries in the LLM call
   log, no draft email; restore + rerun → normal processing.
 
-### BT 7.6: supervisor approval needs a reason (S5, K3)
+### Supervisor approval needs a reason (RT 7.6)
 
+- **Threat:** S5, K3.
 - **Control:** new `supervisor_review`.
 - **Build:**
   - Approving needs a note of at least 10 characters.
@@ -473,8 +499,9 @@ for controls that live outside the gateway.
 - **Tests:** approval without a note → 400; overriding a deny without
   `override` → 400; with both → allowed and audited with the engine result.
 
-### BT R2: anchor the audit chain outside the database
+### Anchor the audit chain outside the database (R2, RT 8.4)
 
+- **Threat:** R2.
 - **Control:** `audit_protect` (exists).
 - **Build:**
   - Every 50 rows (and on each verify), append `{seq, hash, ts}` to
@@ -488,8 +515,9 @@ for controls that live outside the gateway.
 - **Tests:** edit a row and recompute the whole chain in SQLite → `verify`
   still reports the break, at the first anchored row.
 
-### BT 3.1 (keys): per-agent bus keys, external endpoint off by default
+### Per-agent bus keys, external endpoint off by default (RT 3.1d)
 
+- **Threat:** S3.
 - **Control:** `bus_signature` (exists).
 - **Build:**
   - Each sender gets its own random key: `BUS_KEY_<AGENT>` from the
