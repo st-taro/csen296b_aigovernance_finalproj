@@ -34,7 +34,7 @@ import time
 import uuid
 from datetime import datetime
 
-from app import audit, config, db, gateway
+from app import audit, config, controls, db, gateway
 
 AGENTS = {}
 
@@ -45,7 +45,11 @@ ROUTES = {
     "refunds": {"records"},
 }
 
-_seen_ids = {}                 # message id -> monotonic time first seen
+# Tools a message arriving from outside the process (/bus/deliver) may call.
+# Neither touches customer data. Enforced under case_scope.
+EXTERNAL_TOOLS = {"search_policies", "weekly_total"}
+
+_seen_ids = {}               # message id -> monotonic time first seen
 _seen_lock = threading.Lock()
 
 
@@ -155,6 +159,18 @@ def _dispatch(msg: dict, ctx: gateway.Ctx):
         audit.record(ctx.actor, "would_block", agent=str(recipient), tool=msg.get("params", {}).get("name"),
                      case_id=meta.get("case_id"), control="bus_signature",
                      reason=f"[guardrail disabled] {problem}", run_id=ctx.run_id)
+    tool_name = (msg.get("params") or {}).get("name")
+    if ctx.role == "external" and msg.get("method") != "tools/list" and tool_name not in EXTERNAL_TOOLS:
+        # RT 3.1d: even a correctly signed external message may only use tools
+        # that touch no customer data.
+        reason = f"external callers may only use {sorted(EXTERNAL_TOOLS)}, not '{tool_name}'"
+        blocked, did = controls.violation("case_scope", reason, ctx.actor, agent=str(recipient), tool=tool_name,
+                                          case_id=meta.get("case_id"), run_id=ctx.run_id)
+        if blocked:
+            ctx.events.append({"agent": recipient, "tool": tool_name, "outcome": "blocked",
+                               "control": "case_scope", "reason": reason, "decision_id": did})
+            _respond(row_id, {"error": reason})
+            raise gateway.ToolBlocked("case_scope", reason, did)
     agent = AGENTS.get(recipient)
     if agent is None:
         _respond(row_id, {"error": f"no such agent {recipient}"})

@@ -174,6 +174,13 @@ def _case(args, ctx):
     return db.q1("SELECT * FROM cases WHERE id=?", (cid,)) if cid else None
 
 
+def no_customer_access(ctx) -> bool:
+    """True when the run has an explicit empty scope ("" = no customer data:
+    admin requests, /tasks, external bus messages). Tools that list or search
+    customer data must then return nothing, not everything (RT 3.1d)."""
+    return ctx.scope_customer == "" and config.control_enabled("case_scope")
+
+
 def check_case_scope(args, ctx):
     """The run may only touch the customer it is working for."""
     scope = ctx.scope_customer

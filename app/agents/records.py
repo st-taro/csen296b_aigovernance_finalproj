@@ -7,7 +7,7 @@ Retrieval: search_cases, search_profiles, search_policies (RAG over the vector D
 """
 from app import config, db, drive, guardrails, policy, vectorstore
 from app.agents.base import Agent
-from app.gateway import check_case_scope, register
+from app.gateway import check_case_scope, no_customer_access, register
 
 
 class RecordsAgent(Agent):
@@ -59,7 +59,12 @@ def case_doc(c: dict) -> str:
             f"{c['decision_reason'] or ''}\nCustomer description: {c['description']}")
 
 
+_NO_MATCH = {"customer_id": "__no_customer__"}
+
+
 def _scope_where(ctx, args):
+    if no_customer_access(ctx):
+        return _NO_MATCH      # empty scope: match nothing (was: no filter = every customer)
     if ctx.scope_customer and config.control_enabled("case_scope"):
         return {"customer_id": ctx.scope_customer}
     if args.get("customer_id"):
@@ -82,6 +87,8 @@ def get_case(args, ctx, decision_id):
 @register("list_cases", agents={"records"}, checks=[check_case_scope],
           description="List cases for a customer (or all cases for supervisors).", params={"customer_id": "str"})
 def list_cases(args, ctx, decision_id):
+    if no_customer_access(ctx):
+        return {"cases": [], "summary": "no cases"}
     cust = args.get("customer_id") or (ctx.scope_customer or None)
     if cust:
         rows = db.q("SELECT * FROM cases WHERE customer_id=? ORDER BY created_at DESC", (cust,))

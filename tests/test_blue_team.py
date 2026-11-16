@@ -127,3 +127,70 @@ def test_rt_4_6_gateway_fails_closed_on_corrupt_limit():
     assert gateway._effective_limit(float("inf"), 100) == 0.0
     assert gateway._effective_limit(80, 100) == 80
     assert gateway._effective_limit(5000, 100) == 100
+
+
+# ---------------------------------------------------------------------------
+# RT 3.1d: a validly signed external bus message gets no customer data
+# (control: case_scope)
+# ---------------------------------------------------------------------------
+def signed(to, tool, args=None):
+    """A correctly signed message, as a holder of the bus key would send it."""
+    from app import bus
+    return bus.build("orchestrator", to, tool, args or {}, gateway.Ctx(actor="redteam", role="system"))
+
+
+CUSTOMER_DATA_CALLS = [
+    ("email", "list_emails", {}),
+    ("email", "receive_email", {"from_addr": "alice@customer.example", "subject": "CASE-0001", "body": "spoofed"}),
+    ("email", "organize_email", {"email_id": 1, "folder": "archive"}),
+    ("reporting", "refund_report", {}),
+    ("records", "list_cases", {}),
+    ("records", "search_cases", {"query": "damaged"}),
+    ("records", "search_profiles", {"query": "bank account"}),
+    ("records", "get_customer_profile", {"customer_id": "C001"}),
+]
+
+
+@pytest.mark.parametrize("to,tool,args", CUSTOMER_DATA_CALLS, ids=[c[1] for c in CUSTOMER_DATA_CALLS])
+def test_rt_3_1d_signed_external_message_gets_no_customer_data(client, to, tool, args):
+    n_mail = len(db.q("SELECT id FROM emails"))
+    r = client.post("/bus/deliver", json=signed(to, tool, args)).json()
+    assert r["ok"] is False and r["blocked"] == "case_scope", r
+    assert "result" not in r
+    assert len(db.q("SELECT id FROM emails")) == n_mail          # nothing filed
+
+
+def test_rt_3_1d_external_policy_search_still_works(client):
+    r = client.post("/bus/deliver", json=signed("records", "search_policies", {"query": "refund window"})).json()
+    assert r["ok"] is True and r["result"]["results"]
+
+
+def test_rt_3_1d_empty_scope_tools_return_nothing(client):
+    ctx = gateway.Ctx(actor="admin:admin via /tasks", role="admin", scope_customer="")
+    assert gateway.call("records", "list_cases", {}, ctx)["cases"] == []
+    assert gateway.call("records", "search_profiles", {"query": "bank"}, ctx)["results"] == []
+    assert gateway.call("records", "search_cases", {"query": "damaged"}, ctx)["results"] == []
+    assert gateway.call("email", "list_emails", {}, ctx) == []
+    other = gateway.Ctx(actor="x", role="system", scope_customer="")
+    report = gateway.call("reporting", "refund_report", {}, other)
+    assert report["approved"] == [] and report["denied"] == [] and report["escalated"] == []
+
+
+def test_rt_3_1d_admin_reports_still_work(client):
+    r = client.get("/api/reports", headers=login(client, "admin", "admin123")).json()
+    assert r["approved"], "admin console must still see the refund report"
+
+
+def test_rt_3_1d_customer_cannot_file_mail_as_someone_else():
+    ctx = gateway.Ctx(actor="customer:alice", role="customer", scope_customer="C001")
+    with pytest.raises(gateway.ToolBlocked):
+        gateway.call("email", "receive_email", {"from_addr": "bob@customer.example", "subject": "x", "body": "y"}, ctx)
+    ok = gateway.call("email", "receive_email", {"from_addr": "alice@customer.example", "subject": "hi", "body": "y"}, ctx)
+    assert ok["email_id"]
+
+
+def test_rt_3_1d_monitor_mode_shows_the_leak(client, disable):
+    disable("case_scope")
+    r = client.post("/bus/deliver", json=signed("email", "list_emails")).json()
+    assert r["ok"] is True and len(r["result"]) > 0               # baseline: every customer's mail
+    assert last_audit("case_scope", "would_block") is not None

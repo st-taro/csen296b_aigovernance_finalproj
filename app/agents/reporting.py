@@ -1,7 +1,7 @@
 """Reporting agent: approved / denied refunds with reasons, and weekly totals."""
 from app import db, drive
 from app.agents.base import Agent
-from app.gateway import register
+from app.gateway import no_customer_access, register
 from app.policy import active_policy
 
 
@@ -31,6 +31,8 @@ def refund_report(args, ctx, decision_id):
            "r.created_at AS refunded_at, r.decision_id FROM cases c LEFT JOIN refunds r ON r.case_id=c.id "
            "WHERE c.status IN ('approved','refunded','denied','escalated','returned')")
     params = []
+    if no_customer_access(ctx) and ctx.role != "admin":
+        sql += " AND 0"        # empty scope outside the admin console: no customer rows (RT 3.1d)
     if ctx.scope_customer:
         sql += " AND c.customer_id=?"
         params.append(ctx.scope_customer)

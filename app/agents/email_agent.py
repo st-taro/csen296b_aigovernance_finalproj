@@ -4,7 +4,7 @@ import json
 
 from app import config, db, guardrails, llm
 from app.agents.base import Agent
-from app.gateway import check_case_scope, check_email_recipient, register
+from app.gateway import check_case_scope, check_email_recipient, no_customer_access, register
 
 FOLDERS = ("inbox", "sent", "drafts", "case-correspondence", "general", "suspicious", "archive")
 
@@ -81,7 +81,40 @@ def send_email(args, ctx, decision_id):
     return {"email_id": eid, "to": args["to"], "summary": f"sent '{subject}' to {args['to']}"}
 
 
-@register("receive_email", agents={"email"},
+def _scope_email(ctx):
+    """The scoped customer's address, "" for an empty scope, None for unscoped (supervisor)."""
+    if ctx.scope_customer is None:
+        return None
+    if ctx.scope_customer == "":
+        return ""
+    c = db.q1("SELECT email FROM customers WHERE id=?", (ctx.scope_customer,))
+    return c["email"].lower() if c else ""
+
+
+def check_inbound_sender(args, ctx):
+    """A scoped run may only file mail from its own customer's address; an
+    empty scope (e.g. an external bus message) may not file mail at all, so a
+    spoofed inbound email cannot be planted (RT 3.1d)."""
+    own = _scope_email(ctx)
+    if own is None:
+        return None
+    if own == "" or (args.get("from_addr") or "").strip().lower() != own:
+        return ("case_scope", "inbound email sender does not match this run's customer")
+    return None
+
+
+def check_email_owner(args, ctx):
+    """A scoped run may only move its own customer's mail (RT 3.1d)."""
+    own = _scope_email(ctx)
+    if own is None:
+        return None
+    e = db.q1("SELECT to_addr, from_addr FROM emails WHERE id=?", (args.get("email_id"),))
+    if own == "" or not e or own not in (e["to_addr"].lower(), e["from_addr"].lower()):
+        return ("case_scope", "email is outside this run's scope")
+    return None
+
+
+@register("receive_email", agents={"email"}, checks=[check_inbound_sender],
           description="Receive and triage an inbound email into a folder.",
           params={"from_addr": "str", "subject": "str", "body": "str"})
 def receive_email(args, ctx, decision_id):
@@ -119,6 +152,8 @@ def receive_email(args, ctx, decision_id):
           description="List emails, optionally by folder, case or address.",
           params={"folder": "str", "case_id": "str", "address": "str"})
 def list_emails(args, ctx, decision_id):
+    if no_customer_access(ctx):
+        return []             # empty scope: no customer mail (was: every customer's mail, RT 3.1d)
     sql, params = "SELECT * FROM emails WHERE status!='draft'", []
     if ctx.scope_customer:  # customers only see their own mail
         cust = db.q1("SELECT email FROM customers WHERE id=?", (ctx.scope_customer,))
@@ -134,7 +169,7 @@ def list_emails(args, ctx, decision_id):
     return db.q(sql + " ORDER BY id DESC LIMIT 200", params)
 
 
-@register("organize_email", agents={"email"},
+@register("organize_email", agents={"email"}, checks=[check_email_owner],
           description="Move an email to a folder and set labels.",
           params={"email_id": "int", "folder": "str", "labels": "list"})
 def organize_email(args, ctx, decision_id):
