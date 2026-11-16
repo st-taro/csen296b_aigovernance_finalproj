@@ -10,7 +10,7 @@ below is its outline.
 **Finding status:** `Confirmed` = reproduced (red-team run or in-process check) ·
 `Code review` = seen in the code, not yet run · `Design` = accepted trade-off.
 `Mitigated` = blue-team defence built and tested (see
-[../blueteam/defenses.md](../blueteam/defenses.md)); the earlier finding is kept in brackets.
+[../blueteam/blue_team.md](../blueteam/blue_team.md)); the earlier finding is kept in brackets.
 
 ---
 

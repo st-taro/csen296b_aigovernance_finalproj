@@ -68,7 +68,7 @@ GUARDRAILS = _bool("GUARDRAILS", True)
 # Names: input_filter, output_filter, capability, kill_switch, case_scope,
 #        email_recipient, single_limit, weekly_limit, order_checks,
 #        supervisor_lock, policy_engine, rate_limit, bus_signature
-# Blue-team controls (see blueteam/defenses.md):
+# Blue-team controls (see blueteam/blue_team.md):
 #        policy_validation, two_person_policy, recon_auth, input_validation,
 #        audit_protect
 GUARDRAIL_DISABLE = {
