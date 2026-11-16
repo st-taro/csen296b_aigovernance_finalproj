@@ -280,3 +280,62 @@ def test_rt_2_7_monitor_mode_lets_negative_through_to_the_engine(client, disable
                     json={"order_id": "ORD-1001", "amount": -5, "reason": "damaged"})
     assert r.status_code == 200 and r.json()["status"] == "denied"   # policy engine still holds
     assert last_audit("input_validation", "would_block") is not None
+
+
+# ---------------------------------------------------------------------------
+# RT 4.5: policy activation needs a second person (control: two_person_policy)
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def original_policy():
+    first = min(p["id"] for p in db.q("SELECT id FROM policies"))
+    policy.activate_policy(first)
+    yield first
+    policy.activate_policy(first)
+
+
+def test_rt_4_5_upload_waits_for_supervisor(client, original_policy):
+    a, s = login(client, "admin", "admin123"), login(client, "supervisor")
+    r = client.post("/api/policies", headers=a, data={"title": "BT 4.5 lax", "text": rules_doc(purchase_window_days=60)})
+    assert r.status_code == 200, r.text
+    new = r.json()
+    assert new["active"] is False and new["pending_request"]
+    assert policy.active_policy()["id"] == original_policy            # nothing changed yet
+    assert client.post(f"/api/policies/requests/{new['pending_request']}/decision", headers=a,
+                       json={"action": "approve"}).status_code == 403  # an admin cannot approve
+    d = client.post(f"/api/policies/requests/{new['pending_request']}/decision", headers=s,
+                    json={"action": "approve", "note": "reviewed"}).json()
+    assert d["status"] == "approved" and policy.active_policy()["id"] == new["id"]
+    again = client.post(f"/api/policies/requests/{new['pending_request']}/decision", headers=s, json={"action": "approve"})
+    assert again.status_code == 409                                     # decided once only
+
+
+def test_rt_4_5_rollback_needs_approval(client, original_policy):
+    a, s = login(client, "admin", "admin123"), login(client, "supervisor")
+    strict = client.post("/api/policies", headers=a, data={"title": "BT strict", "text": rules_doc(single_refund_limit=50)}).json()
+    client.post(f"/api/policies/requests/{strict['pending_request']}/decision", headers=s, json={"action": "approve"})
+    assert policy.active_policy()["id"] == strict["id"]
+    r = client.post(f"/api/policies/{original_policy}/activate", headers=a)     # roll back to the looser v1
+    assert r.status_code == 202 and r.json()["pending_request"]
+    assert policy.active_policy()["id"] == strict["id"]                         # still the strict one
+    client.post(f"/api/policies/requests/{r.json()['pending_request']}/decision", headers=s, json={"action": "reject"})
+    assert policy.active_policy()["id"] == strict["id"]
+
+
+def test_rt_4_5_reactivating_active_policy_is_noop(client, original_policy):
+    r = client.post(f"/api/policies/{original_policy}/activate", headers=login(client, "admin", "admin123"))
+    assert r.status_code == 200 and r.json()["active"] == original_policy
+
+
+def test_rt_4_5_requester_cannot_approve_own_request(original_policy):
+    pid = policy.add_policy("BT self", "x.md", rules_doc(single_refund_limit=90), "admin:admin", activate=False)["id"]
+    req = policy.request_activation(pid, "supervisor:supervisor")
+    with pytest.raises(policy.ApprovalError):
+        policy.decide_request(req["id"], "supervisor:supervisor", True)
+
+
+def test_rt_4_5_monitor_mode_activates_at_once(client, disable, original_policy):
+    disable("two_person_policy")
+    r = client.post("/api/policies", headers=login(client, "admin", "admin123"),
+                    data={"title": "BT 4.5 monitor", "text": rules_doc(single_refund_limit=90)}).json()
+    assert r["active"] is True and policy.active_policy()["id"] == r["id"]
+    assert last_audit("two_person_policy", "would_block") is not None

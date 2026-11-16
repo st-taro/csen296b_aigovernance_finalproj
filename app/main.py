@@ -256,6 +256,11 @@ def list_policies(user: User = Depends(require("admin", "supervisor"))):
     return rows
 
 
+@app.get("/api/policies/requests")       # declared before /{pid} so "requests" is not parsed as an id
+def policy_requests(status: Optional[str] = None, user: User = Depends(require("admin", "supervisor"))):
+    return policy.list_requests(status)
+
+
 @app.get("/api/policies/{pid}")
 def get_policy(pid: int, user: User = Depends(require("admin", "supervisor"))):
     p = db.q1("SELECT * FROM policies WHERE id=?", (pid,))
@@ -287,23 +292,66 @@ async def upload_policy(title: str = Form(...), file: Optional[UploadFile] = Fil
         if errs:
             controls.violation("policy_validation", "invalid policy rules accepted: " + "; ".join(errs),
                                actor, tool="upload_policy")
+    two_person = config.control_enabled("two_person_policy")
     try:
-        res = policy.add_policy(title[:200], filename, content, actor)
+        res = policy.add_policy(title[:200], filename, content, actor, activate=not two_person)
     except policy.PolicyRejected as e:
         did = controls.violation("policy_validation", "; ".join(e.errors), actor, tool="upload_policy")[1]
         raise HTTPException(400, f"policy rejected (decision {did}): " + "; ".join(e.errors))
-    audit.record(f"admin:{user.username}", "info", tool="upload_policy", reason=f"policy {res['id']} '{title}' "
-                 f"activated; rules={json.dumps(res['rules'])}; warnings={res['warnings']}")
+    summary = f"policy {res['id']} '{title}'; rules={json.dumps(res['rules'])}; warnings={res['warnings']}"
+    if two_person:
+        req = policy.request_activation(res["id"], actor)
+        res.update(active=False, pending_request=req["id"])
+        audit.record(actor, "info", tool="upload_policy", control="two_person_policy",
+                     reason=f"{summary}; awaiting supervisor approval (request {req['id']})")
+    else:
+        res["active"] = True
+        controls.violation("two_person_policy", f"{summary} activated without a second approver", actor,
+                           tool="upload_policy")
     return res
 
 
 @app.post("/api/policies/{pid}/activate")
 def activate(pid: int, user: User = Depends(require("admin"))):
+    """RT 4.5: activating a policy (including rolling back to an older, looser
+    version) needs a supervisor's approval. Re-activating the policy that is
+    already active is a no-op."""
     if not db.q1("SELECT 1 AS one FROM policies WHERE id=?", (pid,)):
         raise HTTPException(404, "policy not found")
-    policy.activate_policy(pid)
-    audit.record(f"admin:{user.username}", "info", tool="activate_policy", reason=f"policy {pid} activated")
+    actor = f"admin:{user.username}"
+    req = policy.request_activation(pid, actor)
+    if req["status"] == "active":
+        return {"ok": True, "active": pid, "note": "policy is already active"}
+    if config.control_enabled("two_person_policy"):
+        audit.record(actor, "info", tool="activate_policy", control="two_person_policy",
+                     reason=f"activation of policy {pid} requested (request {req['id']}); awaiting supervisor")
+        return JSONResponse(status_code=202, content={"ok": True, "pending_request": req["id"],
+                                                      "active": policy.active_policy()["id"]})
+    policy.decide_request(req["id"], "system:monitor-mode", True, "two_person_policy disabled")
+    controls.violation("two_person_policy", f"policy {pid} activated without a second approver", actor,
+                       tool="activate_policy")
     return {"ok": True, "active": pid}
+
+
+class PolicyDecisionIn(BaseModel):
+    action: str        # approve | reject
+    note: str = ""
+
+
+@app.post("/api/policies/requests/{rid}/decision")
+def decide_policy_request(rid: int, body: PolicyDecisionIn, user: User = Depends(require("supervisor"))):
+    if body.action not in ("approve", "reject"):
+        raise HTTPException(400, "action must be approve or reject")
+    actor = f"supervisor:{user.username}"
+    try:
+        req = policy.decide_request(rid, actor, body.action == "approve", body.note)
+    except policy.ApprovalError as e:
+        audit.record(actor, "blocked", tool="policy_decision", control="two_person_policy", reason=str(e))
+        raise HTTPException(409, str(e))
+    did = audit.record(actor, "info", tool="policy_decision", control="two_person_policy",
+                       reason=f"request {rid} for policy {req['policy_id']} {req['status']} "
+                              f"(requested by {req['requested_by']})" + (f": {body.note[:200]}" if body.note else ""))
+    return {**req, "decision_id": did, "active": policy.active_policy()["id"]}
 
 
 class SearchIn(BaseModel):

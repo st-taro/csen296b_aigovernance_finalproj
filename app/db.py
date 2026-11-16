@@ -108,6 +108,16 @@ CREATE TABLE IF NOT EXISTS policies (
     active INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS policy_requests (    -- two_person_policy: activation needs a supervisor
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    policy_id INTEGER NOT NULL,
+    requested_by TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected')),
+    decided_by TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
 CREATE TABLE IF NOT EXISTS memory_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     scope TEXT NOT NULL,

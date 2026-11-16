@@ -124,7 +124,7 @@ function renderLogin() {
 const TABS = {
   customer: [["New refund", viewNewRefund], ["My cases", viewMyCases], ["Inbox", viewInbox], ["Assistant", viewChat]],
   admin: [["Policies", viewPolicies], ["Reports", viewReports], ["Audit log", viewAudit], ["Assistant", viewChat], ["Sandbox", viewSandbox]],
-  supervisor: [["Review queue", viewQueue], ["All cases", viewAllCases], ["Kill switch", viewKill], ["Reports", viewReports],
+  supervisor: [["Review queue", viewQueue], ["All cases", viewAllCases], ["Kill switch", viewKill], ["Policy approvals", viewPolicyApprovals], ["Reports", viewReports],
                ["Audit log", viewAudit], ["Observability", viewObservability], ["Assistant", viewChat]],
 };
 let currentTab = 0;
@@ -250,8 +250,33 @@ async function viewChat() {
 }
 
 // ---------- admin ----------
+const rulesText = (x) => `$${x.single_refund_limit}/refund, $${x.weekly_refund_limit}/week, ${x.purchase_window_days} days, reasons: ${(x.eligible_reasons || []).join(", ")}`;
+
+function policyRequestTable(rows, canDecide, onDone) {
+  const out = h("div");
+  const decide = async (r, action) => {
+    try { await api(`/api/policies/requests/${r.id}/decision`, { json: { action } }); onDone && onDone(); }
+    catch (e) { out.replaceChildren(errorBox(e)); }
+  };
+  return h("div", {}, table([["Request", r => r.id], ["Policy", r => `${r.policy_id} ${r.title}`], ["Rules", r => rulesText(r.rules)],
+    ["Requested by", r => `${r.requested_by} ${short(r.created_at)}`], ["Status", r => statusPill(r.status)],
+    ["Decided by", r => r.decided_by ? `${r.decided_by} ${short(r.decided_at)}` : ""],
+    ["", r => canDecide && r.status === "pending" ? h("div", { class: "row" },
+      h("button", { class: "btn ok", style: "margin:0", onclick: () => decide(r, "approve") }, "Approve"),
+      h("button", { class: "btn danger", style: "margin:0", onclick: () => decide(r, "reject") }, "Reject")) : ""]], rows), out);
+}
+
+async function viewPolicyApprovals() {
+  const [requests, active] = await Promise.all([api("/api/policies/requests"), api("/api/policies")]);
+  const cur = active.find(p => p.active);
+  $view().replaceChildren(h("div", { class: "panel" }, h("h2", {}, "Policy approvals"),
+    h("p", { class: "muted" }, "Admins upload policies; a supervisor must approve before one becomes active. Compare the requested rules with the active policy before approving."),
+    h("div", { class: "kv" }, h("div", {}, "Active policy"), h("div", {}, cur ? `${cur.id} ${cur.title}: ${rulesText(cur.rules)}` : "(defaults)")),
+    policyRequestTable(requests, true, () => { renderSysbar(); viewPolicyApprovals(); })));
+}
+
 async function viewPolicies() {
-  const list = await api("/api/policies");
+  const [list, requests] = await Promise.all([api("/api/policies"), api("/api/policies/requests")]);
   const title = h("input", { id: "ptitle", value: "Customer Refund Policy v2" });
   const file = h("input", { id: "pfile", type: "file", accept: ".md,.txt,.pdf,.docx" });
   const text = h("textarea", { id: "ptext", placeholder: "...or paste policy Markdown here" });
@@ -264,21 +289,25 @@ async function viewPolicies() {
       table([["ID", r => r.id], ["Title", r => r.title], ["File", r => r.filename || ""], ["Active", r => r.active ? statusPill("active") : ""],
              ["Rules", r => `$${r.rules.single_refund_limit}/refund, $${r.rules.weekly_refund_limit}/week, ${r.rules.purchase_window_days} days`],
              ["Uploaded", r => `${r.uploaded_by} ${short(r.created_at)}`],
-             ["", r => session.role === "admin" && !r.active ? h("button", { class: "btn secondary", style: "margin:0", onclick: async (e) => { e.stopPropagation(); await api(`/api/policies/${r.id}/activate`, { method: "POST" }); renderTabs(); } }, "Activate") : ""]],
+             ["", r => session.role === "admin" && !r.active ? h("button", { class: "btn secondary", style: "margin:0", onclick: async (e) => { e.stopPropagation(); await api(`/api/policies/${r.id}/activate`, { method: "POST" }); renderTabs(); } }, "Request activation") : ""]],
         list, async (r) => { const p = await api("/api/policies/" + r.id); viewer.replaceChildren(h("div", { class: "panel" }, h("h2", {}, p.title), h("pre", {}, p.content))); })),
     viewer,
+    h("div", { class: "panel" }, h("h2", {}, "Activation requests"),
+      h("p", { class: "muted" }, "A new or re-activated policy goes live only after a supervisor approves it (two-person rule)."),
+      policyRequestTable(requests, false)),
     h("div", { class: "grid2" },
       h("div", { class: "panel" }, h("h2", {}, "Upload a policy"),
-        h("p", { class: "muted" }, "PDF, DOCX, Markdown or text. Include a ```policy-rules block to set limits. Limits above the org maximum ($100 / $500) are clamped."),
+        h("p", { class: "muted" }, "PDF, DOCX, Markdown or text. Include a ```policy-rules block to set limits. Limits above the org maximum ($100 / $500) are clamped; invalid values are rejected."),
         h("form", { onsubmit: async (e) => { e.preventDefault();
           const fd = new FormData(); fd.append("title", title.value);
           if (file.files[0]) fd.append("file", file.files[0]); else fd.append("text", text.value);
           try { const r = await api("/api/policies", { body: fd });
-                out.replaceChildren(h("div", { class: "msg ok" }, `Policy ${r.id} indexed (${r.chunks} chunks) and active.`),
+                out.replaceChildren(h("div", { class: "msg ok" }, `Policy ${r.id} indexed (${r.chunks} chunks) and ` +
+                    (r.active ? "active." : `waiting for supervisor approval (request ${r.pending_request}).`)),
                   r.warnings.length ? h("div", { class: "msg warn" }, r.warnings.join(" ")) : "", h("pre", {}, JSON.stringify(r.rules, null, 2))); }
           catch (err) { out.replaceChildren(errorBox(err)); } } },
           h("label", { for: "ptitle" }, "Title"), title, h("label", { for: "pfile" }, "File"), file, h("label", { for: "ptext" }, "Text"), text,
-          h("button", { class: "btn", type: "submit" }, "Upload and activate")), out),
+          h("button", { class: "btn", type: "submit" }, "Upload")), out),
       h("div", { class: "panel" }, h("h2", {}, "Search policies (RAG retrieval check)"),
         h("form", { onsubmit: async (e) => { e.preventDefault();
           const r = await api("/api/policies/search", { json: { query: q.value } });

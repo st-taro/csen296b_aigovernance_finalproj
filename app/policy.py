@@ -206,6 +206,58 @@ def activate_policy(pid: int) -> None:
         )
 
 
+# --------------------------------------------------------------------------
+# Two-person rule for policy activation (two_person_policy, RT 4.5)
+# --------------------------------------------------------------------------
+class ApprovalError(ValueError):
+    pass
+
+
+def _username(actor: str) -> str:
+    return (actor or "").split(":", 1)[-1]
+
+
+def request_activation(pid: int, requested_by: str) -> dict:
+    """Ask for a policy to become active. Returns the pending request (an
+    existing one for the same policy is reused), or {"status": "active"} if the
+    policy is already active, so re-activating the current policy is a no-op."""
+    if db.q1("SELECT 1 AS one FROM policies WHERE id=? AND active=1", (pid,)):
+        return {"policy_id": pid, "status": "active"}
+    with db._lock:
+        existing = db.q1("SELECT * FROM policy_requests WHERE policy_id=? AND status='pending'", (pid,))
+        if existing:
+            return existing
+        rid = db.x("INSERT INTO policy_requests(policy_id,requested_by,status,created_at) VALUES (?,?,?,?)",
+                   (pid, requested_by, "pending", db.now_iso()))
+    return db.q1("SELECT * FROM policy_requests WHERE id=?", (rid,))
+
+
+def decide_request(rid: int, decided_by: str, approve: bool, note: str = "") -> dict:
+    """A second person approves or rejects a pending activation. The decider
+    may not be the requester. Approval activates the policy."""
+    with db._lock:
+        req = db.q1("SELECT * FROM policy_requests WHERE id=?", (rid,))
+        if not req:
+            raise ApprovalError("request not found")
+        if req["status"] != "pending":
+            raise ApprovalError(f"request is already {req['status']}")
+        if _username(req["requested_by"]) == _username(decided_by):
+            raise ApprovalError("the requester cannot approve their own policy change")
+        db.x("UPDATE policy_requests SET status=?, decided_by=?, note=?, decided_at=? WHERE id=? AND status='pending'",
+             ("approved" if approve else "rejected", decided_by, (note or "")[:500], db.now_iso(), rid))
+    if approve:
+        activate_policy(req["policy_id"])
+    return db.q1("SELECT * FROM policy_requests WHERE id=?", (rid,))
+
+
+def list_requests(status: str = None) -> list:
+    sql = ("SELECT r.*, p.title, p.rules_json FROM policy_requests r JOIN policies p ON p.id=r.policy_id")
+    rows = db.q(sql + (" WHERE r.status=?" if status else "") + " ORDER BY r.id DESC", (status,) if status else ())
+    for r in rows:
+        r["rules"] = json.loads(r.pop("rules_json"))
+    return rows
+
+
 def active_policy() -> dict:
     p = db.q1("SELECT * FROM policies WHERE active=1")
     if not p:
