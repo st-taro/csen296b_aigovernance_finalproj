@@ -249,3 +249,34 @@ def test_rt_5_3_monitor_mode_restores_old_behaviour(client, disable):
     assert client.get("/api/system").status_code == 200
     assert "guardrails" in client.get("/health").json()
     assert last_audit("recon_auth", "would_block") is not None
+
+
+# ---------------------------------------------------------------------------
+# RT 2.7 / 2.1: non-finite and out-of-range amounts (control: input_validation)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity", "1e309", "-10", "0", "1e9"])
+def test_rt_2_7_bad_amount_rejected_at_boundary(client, token):
+    h = {**login(client, "alice", "alice123"), "Content-Type": "application/json"}
+    n_cases = len(db.q("SELECT id FROM cases"))
+    raw = '{"order_id":"ORD-1001","amount":%s,"reason":"damaged","description":"BT 2.7"}' % token
+    r = client.post("/api/cases", content=raw, headers=h)
+    assert r.status_code == 422, (token, r.status_code, r.text)
+    assert len(db.q("SELECT id FROM cases")) == n_cases          # nothing stored
+    s = login(client, "supervisor")
+    for path in ("/api/cases", "/api/supervisor/queue", "/api/reports"):
+        assert client.get(path, headers=s).status_code == 200    # no cascading 500s
+
+
+def test_rt_2_7_planner_path_rejects_infinity():
+    ctx = gateway.Ctx(actor="customer:alice", role="customer", scope_customer="C001")
+    with pytest.raises(ValueError):
+        gateway.call("intake", "submit_case", {"customer_id": "C001", "order_id": "ORD-1001",
+                                               "amount": float("inf"), "reason": "damaged"}, ctx)
+
+
+def test_rt_2_7_monitor_mode_lets_negative_through_to_the_engine(client, disable):
+    disable("input_validation")
+    r = client.post("/api/cases", headers=login(client, "alice", "alice123"),
+                    json={"order_id": "ORD-1001", "amount": -5, "reason": "damaged"})
+    assert r.status_code == 200 and r.json()["status"] == "denied"   # policy engine still holds
+    assert last_audit("input_validation", "would_block") is not None

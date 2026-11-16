@@ -3,6 +3,7 @@
 Run:  uvicorn app.main:app --reload --port 8000   then open http://localhost:8000
 """
 import json
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -168,6 +169,15 @@ def my_profile(user: User = Depends(require("customer"))):
 @app.post("/api/cases")
 def submit_case(body: CaseIn, user: User = Depends(require("customer"))):
     ctx = ctx_for(user)
+    # RT 2.7 / 2.1: JSON NaN and Infinity parse as floats and pass Pydantic. A
+    # NaN amount used to crash the insert (HTTP 500); Infinity was stored and
+    # then broke every page that lists the case (JSON cannot encode it).
+    if not (math.isfinite(body.amount) and 0 < body.amount <= config.MAX_REQUEST_AMOUNT):
+        blocked, did = controls.violation("input_validation", f"invalid refund amount {body.amount!r}",
+                                          ctx.actor, tool="submit_case", run_id=ctx.run_id)
+        if blocked:
+            raise HTTPException(422, f"amount must be a number greater than 0 and at most "
+                                     f"{config.MAX_REQUEST_AMOUNT:.0f} (decision {did})")
     try:
         created = bus.send("orchestrator", "intake", "submit_case",
                            {"customer_id": user.customer_id, **body.model_dump()}, ctx)
