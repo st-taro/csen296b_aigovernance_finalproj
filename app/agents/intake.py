@@ -1,10 +1,14 @@
 """Intake agent: ticket submission and ticket assignment."""
 import math
+import re
 
 from app import audit, config, db, guardrails
 from app.agents.base import Agent
 from app.gateway import check_case_scope, check_supervisor_lock, register
 from app.policy import REASONS
+
+# Order IDs look like ORD-1001. [0-9], not \d: \d also matches non-ASCII digits.
+ORDER_ID_RE = re.compile(r"ORD-[0-9]{4}")
 
 
 class IntakeAgent(Agent):
@@ -26,6 +30,11 @@ def submit_case(args, ctx, decision_id):
     order_id = str(args.get("order_id") or "").strip().upper()
     if not order_id:
         raise ValueError("order_id is required")
+    # RT 1.3: the order_id is stored and put unfenced into prompts and the
+    # vector document. The chat and bus paths get it from the planner, so
+    # check the format here too, not only at the API.
+    if config.control_enabled("input_validation") and not ORDER_ID_RE.fullmatch(order_id):
+        raise ValueError("order_id must look like ORD-1234")
     reason = args.get("reason") or "other"
     if reason not in REASONS:
         reason = "other"

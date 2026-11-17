@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app import agents, audit, bus, config, controls, db, gateway, llm, orchestrator, policy, vectorstore
 from app.agent import Agent as StarterAgent
+from app.agents import intake as intake_agent
 from app.agents import records as records_agent
 from app.gateway import Ctx, ToolBlocked
 from app.retriever import Retriever
@@ -166,6 +167,22 @@ def my_profile(user: User = Depends(require("customer"))):
     return bus.send("orchestrator", "records", "get_customer_profile", {"customer_id": user.customer_id}, ctx)
 
 
+def _case_input_problems(body: CaseIn) -> list:
+    """What is wrong with a refund request's text fields (empty list = fine).
+    Echoed values are cut short, so a 20 KB order_id is not copied into the
+    error or the audit log."""
+    problems = []
+    order_id = body.order_id.strip().upper()
+    if not intake_agent.ORDER_ID_RE.fullmatch(order_id):
+        problems.append(f"order_id must look like ORD-1234, got {body.order_id[:30]!r}"
+                        + (f" ({len(body.order_id)} chars)" if len(body.order_id) > 30 else ""))
+    if body.reason not in policy.REASONS:
+        problems.append(f"reason must be one of {', '.join(policy.REASONS)}, got {body.reason[:30]!r}")
+    if len(body.description) > config.MAX_INPUT_CHARS:
+        problems.append(f"description is {len(body.description)} characters; the maximum is {config.MAX_INPUT_CHARS}")
+    return problems
+
+
 @app.post("/api/cases")
 def submit_case(body: CaseIn, user: User = Depends(require("customer"))):
     ctx = ctx_for(user)
@@ -178,6 +195,14 @@ def submit_case(body: CaseIn, user: User = Depends(require("customer"))):
         if blocked:
             raise HTTPException(422, f"amount must be a number greater than 0 and at most "
                                      f"{config.MAX_REQUEST_AMOUNT:.0f} (decision {did})")
+    # RT 1.3: order_id, reason and description are checked before anything is
+    # stored, indexed or put into a prompt.
+    problems = _case_input_problems(body)
+    if problems:
+        blocked, did = controls.violation("input_validation", "; ".join(problems), ctx.actor,
+                                          tool="submit_case", run_id=ctx.run_id)
+        if blocked:
+            raise HTTPException(422, "; ".join(problems) + f" (decision {did})")
     try:
         created = bus.send("orchestrator", "intake", "submit_case",
                            {"customer_id": user.customer_id, **body.model_dump()}, ctx)

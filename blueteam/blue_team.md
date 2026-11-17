@@ -26,7 +26,7 @@ Run `python -m pytest -q` for all tests, or `python -m pytest -q tests/test_blue
 | 1 | Reject non-finite and out-of-range amounts (RT 2.7, 2.1) | T-5 | `input_validation` | Done |
 | 1 | Two-person rule for policy activation (RT 4.5) | T-6 | `two_person_policy` | Done |
 | 1 | Reset sandbox keeps the audit log (R1, RT 8.4) | R1 | `audit_protect` | Done |
-| 2 | Validate `order_id`, `reason` and description at the boundary (RT 1.3) | T-2 | `input_validation` | Planned |
+| 2 | Validate `order_id`, `reason` and description at the boundary (RT 1.3) | T-2 | `input_validation` | Done |
 | 2 | Refunds stay atomic across worker processes (RT 2.3, 2.4) | T-3 | `atomic_refunds` | Planned |
 | 2 | Shared replay cache and message-ID checks (RT 3.1b, 3.1c) | S2 | `bus_signature` | Planned |
 | 2 | Atomic supervisor decision (T-10) | T-10 | `supervisor_lock` | Planned |
@@ -229,23 +229,33 @@ for controls that live outside the gateway.
 
 ## Phase 2: correctness under attack
 
-### Validate `order_id`, `reason` and description at the boundary (RT 1.3)
+### Validate `order_id`, `reason` and description at the boundary (RT 1.3) · Done
 
 - **Threat:** T-2.
 - **Control:** `input_validation` (exists).
-- **Problem:** `order_id` has no format or length check. It is uppercased,
+- **Problem:** `order_id` had no format or length check. It was uppercased,
   stored, put unfenced into the Refunds and email prompts and the case
   vector document. A 20 KB `order_id` or one with newline-separated
-  instructions is accepted.
-- **Build:**
-  - `POST /api/cases`: `order_id` must match `^ORD-\d{4}$` after strip/upper
-    (max 20 chars); `reason` must be one of the known reasons; `description`
-    max `MAX_INPUT_CHARS`. Otherwise 422 + `blocked` audit row, nothing stored.
-  - Repeat the `order_id` check inside the `submit_case` tool, so the chat and
-    bus paths are covered too (the planner can emit any string).
-- **Tests:** newline + instructions in `order_id`, a 20 KB `order_id`, an
-  unknown reason, a 4,001-char description → 422, no case, no vector doc.
-  The SQL-injection payloads from RT 6.2 in `order_id` → 422, never 5xx.
+  instructions was accepted.
+- **Built:**
+  - `POST /api/cases`: after strip/upper, `order_id` must be `ORD-` plus four
+    ASCII digits (`[0-9]`, not `\d`, which also matches non-ASCII digits);
+    `reason` must be one of the known reasons; `description` at most
+    `MAX_INPUT_CHARS`. Otherwise 422 + `blocked` audit row, nothing stored.
+    Echoed values are cut to 30 characters, so a 20 KB payload is not copied
+    into the error or the audit log.
+  - The `submit_case` tool repeats the `order_id` check, so the chat and bus
+    paths are covered too (the planner can emit any string).
+- **Code:** `app/main.py` `_case_input_problems`, `app/agents/intake.py`
+  `ORDER_ID_RE`.
+- **Tests:** newline + instructions in `order_id`, a 20 KB `order_id`, the
+  RT 6.2 SQL-injection payloads, Unicode digits, an unknown reason and a
+  4,001-char description → 422, no case, no vector doc, short error. A
+  lowercase, padded `order_id` is still accepted. The planner path rejects a
+  bad `order_id`. In monitor mode the request goes through (the engine denies
+  the unknown order) with a `would_block` row.
+- **Behaviour change:** an unknown `reason` now gets 422 at the API instead of
+  being stored as `other`. The tool path (chat/bus) still maps it to `other`.
 - **Red-team effect:** RT 6.2 order_id probes now get 422 (still HELD).
 
 ### Refunds stay atomic across worker processes (RT 2.3, 2.4)
