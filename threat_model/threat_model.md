@@ -3,12 +3,13 @@
 Sources: the code in `app/`, [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), the
 User Guide, the *Red Team Attacks* worksheet and the *Blue Team Defenses*
 document. Test IDs (e.g. `RT 2.4`) refer to [../redteam/plan.md](../redteam/plan.md);
-defence IDs (e.g. `BT 2.4`) refer to the Blue Team document. The per-layer
-MAESTRO write-up goes in [MAESTRO_mapping.md](MAESTRO_mapping.md); section 8
-below is its outline.
+defence IDs (e.g. `BT 2.4`) refer to the Blue Team document. The MAESTRO
+layer mapping is section 8.
 
 **Finding status:** `Confirmed` = reproduced (red-team run or in-process check) ·
-`Code review` = seen in the code, not yet run · `Design` = accepted trade-off.
+`Code review` = seen in the code, not yet run · `Design` = accepted trade-off
+(recorded as a governance decision or accepted residual risk in
+[../blueteam/blue_team.md](../blueteam/blue_team.md)).
 `Mitigated` = blue-team defence built and tested (see
 [../blueteam/blue_team.md](../blueteam/blue_team.md)); the earlier finding is kept in brackets.
 
