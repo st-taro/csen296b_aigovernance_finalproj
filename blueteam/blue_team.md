@@ -171,14 +171,25 @@ for controls that live outside the gateway.
 - **Built:**
   - `POST /api/cases` rejects non-finite, ≤ 0 and > `MAX_REQUEST_AMOUNT`
     (100,000) amounts with 422 and an audit row, before storing anything.
-  - The `submit_case` tool repeats the finite check for the chat and bus
-    paths, where a model can emit `1e309`.
-- **Code:** `app/main.py` `submit_case`, `app/agents/intake.py`.
+  - The `submit_case` tool repeats the same check (finite, > 0, at most
+    `MAX_REQUEST_AMOUNT`) for the chat and bus paths, where a model can emit
+    `1e309` or a negative number.
+  - Refund amounts at the gateway: a NaN `amount` on `issue_refund` used to
+    pass `order_checks`, `single_limit` and `weekly_limit`, because every
+    comparison with NaN is False; only the policy engine or the database's
+    NOT NULL constraint stopped it. `_refund_amount` now treats any
+    non-finite amount as +inf, so each of the three checks blocks it on its
+    own, and `check_order` reports "refund amount must be a finite number".
+- **Code:** `app/main.py` `submit_case`, `app/agents/intake.py`,
+  `app/gateway.py` `_refund_amount` and `check_order`.
 - **Tests:** `NaN`, `±Infinity`, `1e309`, `-10`, `0`, `1e9` → 422, no case,
-  supervisor pages still 200. The planner path rejects Infinity. In monitor
-  mode a negative amount reaches the engine and is denied.
+  supervisor pages still 200. The planner path rejects Infinity, `-50` and
+  `0`, with no case stored. A refund for `NaN`, `Infinity` or the string
+  `"nan"` is blocked by each amount check separately, and `issue_refund` is
+  still blocked with `policy_engine` off. In monitor mode a negative amount
+  reaches the engine and is denied.
 - **Behaviour change:** zero and negative amounts now get 422 at the API
-  instead of a "denied" case.
+  instead of a "denied" case, and are rejected on the chat and bus paths.
 
 ### Two-person rule for policy activation (RT 4.5) · Done
 
