@@ -34,11 +34,12 @@ def submit_case(args, ctx, decision_id):
     except (TypeError, ValueError):
         order = db.q1("SELECT amount FROM orders WHERE order_id=?", (order_id,))
         amount = float(order["amount"]) if order else 0.0
-    # Same check for the chat and bus paths, where the amount comes from the
-    # planner (a model can emit 1e309, which parses as Infinity).
+    # Same check as the API boundary, for the chat and bus paths, where the
+    # amount comes from the planner (a model can emit 1e309, which parses as
+    # Infinity, or a negative number).
     if config.control_enabled("input_validation") and not (
-            math.isfinite(amount) and abs(amount) <= config.MAX_REQUEST_AMOUNT):
-        raise ValueError(f"amount must be a finite number of at most {config.MAX_REQUEST_AMOUNT:.0f}")
+            math.isfinite(amount) and 0 < amount <= config.MAX_REQUEST_AMOUNT):
+        raise ValueError(f"amount must be a number greater than 0 and at most {config.MAX_REQUEST_AMOUNT:.0f}")
     description = str(args.get("description") or "")
     if config.control_enabled("input_filter"):
         description = description[:config.MAX_INPUT_CHARS]

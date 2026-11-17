@@ -235,7 +235,11 @@ def _refund_amount(args, ctx):
     amt = args.get("amount")
     if amt is None and case:
         amt = case["amount"]
-    return float(amt or 0), case
+    amt = float(amt or 0)
+    # A NaN amount passes every `>` / `<=` comparison, so the limit and order
+    # checks would all let it through. Treat any non-finite amount as +inf,
+    # which every one of them blocks (fail closed).
+    return (amt if math.isfinite(amt) else math.inf), case
 
 
 def _effective_limit(value, hard: float) -> float:
@@ -284,6 +288,8 @@ def check_order(args, ctx):
         return ("order_checks", "order does not belong to the case's customer")
     if amt <= 0:
         return ("order_checks", "refund amount must be positive")
+    if math.isinf(amt):
+        return ("order_checks", "refund amount must be a finite number")
     if amt > float(case["amount"]) + 0.001 or amt > float(order["amount"]) + 0.001:
         return ("order_checks", f"${amt:.2f} exceeds the requested/order amount")
     if db.q1("SELECT 1 AS one FROM refunds WHERE order_id=?", (case["order_id"],)):

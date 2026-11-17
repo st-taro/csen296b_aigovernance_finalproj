@@ -274,6 +274,39 @@ def test_rt_2_7_planner_path_rejects_infinity():
                                                "amount": float("inf"), "reason": "damaged"}, ctx)
 
 
+@pytest.mark.parametrize("amount", [-50.0, 0.0])
+def test_rt_2_7_planner_path_rejects_non_positive(client, amount):
+    ctx = gateway.Ctx(actor="customer:alice", role="customer", scope_customer="C001")
+    n_cases = len(db.q("SELECT id FROM cases"))
+    with pytest.raises(ValueError):
+        gateway.call("intake", "submit_case", {"customer_id": "C001", "order_id": "ORD-1001",
+                                               "amount": amount, "reason": "damaged"}, ctx)
+    assert len(db.q("SELECT id FROM cases")) == n_cases
+
+
+@pytest.mark.parametrize("amount", [float("nan"), float("inf"), "nan"])
+def test_rt_2_7_non_finite_refund_amount_blocked_by_every_amount_check(client, disable, amount):
+    """A NaN amount used to pass order_checks, single_limit and weekly_limit
+    (every comparison with NaN is False); only the policy engine or the DB
+    NOT NULL constraint stopped it. Each amount check must now block on its own."""
+    order = db.q1("SELECT * FROM orders WHERE order_id='ORD-1001'")
+    ts = db.now_iso()
+    cid = f"CASE-BT27-{abs(hash(str(amount))) % 10000}"
+    db.x("DELETE FROM cases WHERE id=?", (cid,))
+    db.x("INSERT INTO cases(id,customer_id,order_id,amount,reason,description,contact_email,status,"
+         "injection_flag,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+         (cid, order["customer_id"], order["order_id"], 1.0, "damaged", "", "x@example.com",
+          "approved", 0, ts, ts))
+    args = {"case_id": cid, "amount": amount}
+    ctx = gateway.Ctx(actor="agent:test", role="customer", scope_customer=order["customer_id"])
+    for check in (gateway.check_order, gateway.check_single_limit, gateway.check_weekly_limit):
+        assert check(args, ctx) is not None, check.__name__
+    disable("policy_engine")
+    with pytest.raises(gateway.ToolBlocked):
+        gateway.call("refunds", "issue_refund", args, ctx)
+    assert db.q1("SELECT 1 AS one FROM refunds WHERE case_id=?", (cid,)) is None
+
+
 def test_rt_2_7_monitor_mode_lets_negative_through_to_the_engine(client, disable):
     disable("input_validation")
     r = client.post("/api/cases", headers=login(client, "alice", "alice123"),
